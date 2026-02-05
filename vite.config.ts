@@ -12,7 +12,13 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': {
+      // 数据中台 API
+      '/api/v1': {
+        target: 'http://115.190.44.247',
+        changeOrigin: true,
+      },
+      // App 端 API（本地后端）
+      '/api/app': {
         target: 'http://localhost:8080',
         changeOrigin: true,
       },

@@ -8,7 +8,9 @@ import type {
   FileAsset,
   ApiResponse,
   PaginatedResponse,
+  ExtractFieldDef,
 } from '@/types'
+import { DATA_HUB_CONFIG } from '@/types'
 
 // =============== 文件资产相关 ===============
 export const fileService = {
@@ -191,3 +193,89 @@ export const lawService = {
     )
   },
 }
+
+// =============== 招标文件相关（专用） ===============
+
+// 数据中台返回的完整信息结构
+interface DocTypeFullResponse {
+  docType: DocType
+  fields: DocFieldDef[]
+  templates: unknown[]
+}
+
+export const tenderService = {
+  /**
+   * 获取招标文件的字段定义
+   * 从数据中台获取 ZTZA790000001 类型的字段列表
+   */
+  async getFieldDefinitions(): Promise<ExtractFieldDef[]> {
+    const docTypeCode = DATA_HUB_CONFIG.TENDER_DOC_TYPE_CODE
+    
+    try {
+      // 获取文件类型详情（含字段）
+      const response = await dataHubClient.get<{ data: DocTypeFullResponse; meta: unknown }>(
+        `/doc-types/full/${docTypeCode}`
+      )
+      
+      // 调试：打印完整的 API 原始响应
+      console.log('========== 数据中台 API 原始响应 ==========')
+      console.log('完整响应:', JSON.stringify(response.data, null, 2).substring(0, 2000) + '...')
+      console.log('============================================')
+      
+      const { fields } = response.data.data
+      
+      // 调试：打印原始数据（使用 any 绕过类型检查，查看实际返回的所有字段）
+      console.log('========== 数据中台原始字段 ==========')
+      console.log('字段数量:', fields.length)
+      if (fields.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const f = fields[0] as any
+        console.log('第一个字段所有键:', Object.keys(f))
+        console.log('--- 关键字段值（从原始响应） ---')
+        console.log('anchorWord:', f.anchorWord)
+        console.log('valueSource:', f.valueSource)
+        console.log('extractMethod:', f.extractMethod)
+        console.log('outputFormat:', f.outputFormat)
+        console.log('完整原始数据:', JSON.stringify(f, null, 2))
+      }
+      console.log('=======================================')
+      
+      // 转换为提取字段格式（字段一一对应数据中台）
+      const extractFields: ExtractFieldDef[] = fields.map(field => ({
+        id: field.id,
+        fieldCode: field.fieldCode,
+        fieldName: field.fieldName,
+        fieldCategory: field.fieldCategory,
+        requiredFlag: field.requiredFlag,
+        valueSource: field.valueSource,       // 取值方式
+        enumOptions: field.enumOptions,       // 枚举值
+        exampleValue: field.exampleValue,     // 示例数据
+        fieldDescription: field.fieldDescription, // 字段说明
+        anchorWord: field.anchorWord,         // 定位词
+        outputFormat: field.outputFormat,     // 输出格式
+        extractMethod: field.extractMethod,   // 提取方法
+        // 兼容字段
+        code: field.fieldCode,
+        name: field.fieldName,
+        groupName: field.fieldCategory,
+      }))
+      
+      return extractFields
+    } catch (error) {
+      console.error('获取招标文件字段定义失败:', error)
+      throw error
+    }
+  },
+  
+  /**
+   * 获取招标文件类型信息
+   */
+  async getDocType(): Promise<DocType> {
+    const docTypeCode = DATA_HUB_CONFIG.TENDER_DOC_TYPE_CODE
+    const response = await dataHubClient.get<{ data: DocTypeFullResponse; meta: unknown }>(
+      `/doc-types/full/${docTypeCode}`
+    )
+    return response.data.data.docType
+  },
+}
+

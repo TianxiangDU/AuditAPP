@@ -3,6 +3,8 @@ export interface Project {
   id: string
   projectName: string
   tenderFileId: string
+  tenderDsId?: number
+  tenderFileUrl?: string  // 文件预览 URL
   status: ProjectStatus
   pendingCount: number
   riskCount: number
@@ -137,16 +139,33 @@ export interface DocType {
   fieldCount: number
 }
 
+// 数据中台返回的字段定义（实际 API 格式）
 export interface DocFieldDef {
   id: string
-  docTypeId: string
-  code: string
-  name: string
-  description: string
-  dataType: 'string' | 'number' | 'date' | 'boolean' | 'array'
-  isRequired: boolean
-  sortOrder: number
-  groupName: string
+  docTypeId?: string          // 所属文件类型ID
+  fieldCode: string           // 字段编码，如 ZTZA790000001-001
+  fieldName: string           // 字段名称
+  fieldCategory: string       // 字段类别：文字、日期、数量、金额、枚举
+  requiredFlag: 0 | 1         // 是否必填：0-否，1-是
+  valueSource: string | null  // 取值方式
+  enumOptions: string | null  // 枚举值（JSON字符串）
+  exampleValue: string | null // 示例数据
+  fieldDescription: string | null // 字段说明
+  anchorWord: string | null   // 定位词
+  outputFormat: string | null // 输出格式
+  extractMethod: string | null // 提取方法
+  status?: number             // 状态
+  rowVersion?: number         // 数据版本号
+  createdAt?: string          // 创建时间
+  updatedAt?: string          // 更新时间
+  // 以下为兼容旧代码的别名
+  code?: string
+  name?: string
+  description?: string
+  dataType?: 'string' | 'number' | 'date' | 'boolean' | 'array'
+  isRequired?: boolean
+  sortOrder?: number
+  groupName?: string
 }
 
 export interface AuditRule {
@@ -205,8 +224,34 @@ export interface PaginatedResponse<T> {
   totalPages: number
 }
 
-// =============== 招标文件解析字段（固定）===============
-export const TENDER_FIELD_DEFINITIONS = [
+// =============== 数据中台配置 ===============
+export const DATA_HUB_CONFIG = {
+  // 招标文件类型编码
+  TENDER_DOC_TYPE_CODE: 'ZTZA790000001',
+}
+
+// =============== 字段定义扩展（用于提取）===============
+export interface ExtractFieldDef {
+  id: string
+  fieldCode: string           // 字段编码
+  fieldName: string           // 字段名称
+  fieldCategory: string       // 字段类别：文字、日期、数量、金额、枚举
+  requiredFlag: 0 | 1         // 是否必填
+  valueSource: string | null  // 取值方式
+  enumOptions: string | null  // 枚举值
+  exampleValue: string | null // 示例数据
+  fieldDescription: string | null // 字段说明
+  anchorWord: string | null   // 定位词
+  outputFormat: string | null // 输出格式
+  extractMethod: string | null // 提取方法
+  // 兼容字段
+  code?: string
+  name?: string
+  groupName?: string
+}
+
+// =============== 招标文件解析字段（备用，从数据中台获取失败时使用）===============
+export const TENDER_FIELD_DEFINITIONS_FALLBACK = [
   { code: 'projectName', name: '项目名称', group: '基本信息', required: true },
   { code: 'serviceScope', name: '服务范围/建设规模', group: '基本信息', required: false },
   { code: 'bidOpeningTime', name: '开标时间', group: '时间要求', required: false },
@@ -231,7 +276,7 @@ export const TENDER_FIELD_DEFINITIONS = [
   { code: 'hasSpecificCriteria', name: '是否有特定标准描述', group: '评标信息', required: false },
 ] as const
 
-export type TenderFieldCode = typeof TENDER_FIELD_DEFINITIONS[number]['code']
+export type TenderFieldCode = typeof TENDER_FIELD_DEFINITIONS_FALLBACK[number]['code']
 
 // =============== 台账字段定义（固定）===============
 export const LEDGER_FIELD_DEFINITIONS = [

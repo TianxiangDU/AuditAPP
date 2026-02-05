@@ -1,76 +1,260 @@
-import { Outlet, Link, useLocation } from 'react-router-dom'
-import { 
-  FileSearch, 
-  Home, 
-  FolderOpen, 
+import { useState } from 'react'
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
+import {
+  LayoutDashboard,
+  FolderKanban,
+  Plus,
+  Bell,
+  Loader2,
+  Check,
+  AlertCircle,
+  X,
+  ChevronRight,
   Settings,
-  ChevronRight 
+  Menu,
+  FileCheck,
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
-
-const navigation = [
-  { name: '首页', href: '/projects', icon: Home },
-  { name: '项目管理', href: '/projects', icon: FolderOpen },
-]
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import { useTaskContext, TASK_TYPE_NAMES } from '@/contexts/TaskContext'
+import { cn, formatRelativeTime } from '@/lib/utils'
 
 export function MainLayout() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const { tasks, stats, clearCompleted, removeTask } = useTaskContext()
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+
+  const navItems = [
+    { path: '/dashboard', icon: LayoutDashboard, label: '工作台' },
+    { path: '/projects', icon: FolderKanban, label: '项目列表' },
+    { path: '/audit-rules', icon: FileCheck, label: '审计规则' },
+  ]
+
+  // 最近的任务（显示最多10个）
+  const recentTasks = tasks.slice(0, 10)
+  const hasRunningTasks = stats.running > 0
 
   return (
     <div className="flex h-screen bg-background">
       {/* 侧边栏 */}
-      <div className="hidden w-64 flex-col border-r bg-card lg:flex">
+      <aside
+        className={cn(
+          'flex flex-col border-r bg-card transition-all duration-300',
+          sidebarCollapsed ? 'w-16' : 'w-56'
+        )}
+      >
         {/* Logo */}
-        <div className="flex h-16 items-center gap-2 border-b px-6">
-          <FileSearch className="h-8 w-8 text-primary" />
-          <span className="text-xl font-bold tracking-tight">招采审计</span>
+        <div className="flex h-14 items-center justify-between border-b px-4">
+          {!sidebarCollapsed && (
+            <Link to="/dashboard" className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold">
+                审
+              </div>
+              <span className="font-semibold">审计工作台</span>
+            </Link>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          >
+            <Menu className="h-4 w-4" />
+          </Button>
         </div>
 
         {/* 导航 */}
-        <ScrollArea className="flex-1 px-3 py-4">
-          <nav className="space-y-1">
-            {navigation.map((item) => {
-              const isActive = location.pathname === item.href || 
-                (item.href !== '/projects' && location.pathname.startsWith(item.href))
-              return (
-                <Link key={item.name} to={item.href}>
-                  <Button
-                    variant={isActive ? 'secondary' : 'ghost'}
-                    className={cn(
-                      'w-full justify-start',
-                      isActive && 'bg-secondary font-medium'
-                    )}
-                  >
-                    <item.icon className="mr-2 h-4 w-4" />
-                    {item.name}
-                  </Button>
-                </Link>
-              )
-            })}
-          </nav>
-        </ScrollArea>
+        <nav className="flex-1 p-2">
+          {navItems.map((item) => {
+            const Icon = item.icon
+            const isActive = location.pathname.startsWith(item.path)
+            return (
+              <Link key={item.path} to={item.path}>
+                <div
+                  className={cn(
+                    'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors',
+                    isActive
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                  )}
+                >
+                  <Icon className="h-5 w-5 shrink-0" />
+                  {!sidebarCollapsed && <span>{item.label}</span>}
+                </div>
+              </Link>
+            )
+          })}
+        </nav>
 
-        {/* 底部 */}
-        <div className="border-t p-4">
-          <Button variant="ghost" className="w-full justify-start">
-            <Settings className="mr-2 h-4 w-4" />
-            设置
+        {/* 新建项目按钮 */}
+        <div className="border-t p-2">
+          <Button
+            className={cn('w-full', sidebarCollapsed && 'px-0')}
+            onClick={() => navigate('/projects/new')}
+          >
+            <Plus className="h-4 w-4" />
+            {!sidebarCollapsed && <span className="ml-2">新建项目</span>}
           </Button>
         </div>
-      </div>
+      </aside>
 
       {/* 主内容区 */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* 顶部栏 */}
-        <header className="flex h-16 items-center justify-between border-b bg-card px-6">
-          <div className="flex items-center gap-2">
-            <Breadcrumb />
-          </div>
+        {/* 顶栏 */}
+        <header className="flex h-14 items-center justify-between border-b bg-card px-6">
           <div className="flex items-center gap-4">
-            <span className="text-sm text-muted-foreground">审计人员</span>
+            {/* 面包屑或标题可以放这里 */}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* 任务中心 */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon" className="relative">
+                  {hasRunningTasks ? (
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  ) : (
+                    <Bell className="h-5 w-5" />
+                  )}
+                  {stats.running > 0 && (
+                    <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground">
+                      {stats.running}
+                    </span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-96 p-0" align="end">
+                <div className="flex items-center justify-between border-b p-3">
+                  <h3 className="font-semibold">任务中心</h3>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    {stats.running > 0 && (
+                      <span className="flex items-center gap-1">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        {stats.running} 进行中
+                      </span>
+                    )}
+                    {stats.completed > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={clearCompleted}
+                      >
+                        清除已完成
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <ScrollArea className="max-h-[400px]">
+                  {recentTasks.length === 0 ? (
+                    <div className="p-8 text-center text-sm text-muted-foreground">
+                      暂无任务
+                    </div>
+                  ) : (
+                    <div className="divide-y">
+                      {recentTasks.map((task) => (
+                        <div
+                          key={task.id}
+                          className="flex items-start gap-3 p-3 hover:bg-muted/50"
+                        >
+                          {/* 状态图标 */}
+                          <div className="mt-0.5">
+                            {task.status === 'running' && (
+                              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                            )}
+                            {task.status === 'pending' && (
+                              <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30" />
+                            )}
+                            {task.status === 'completed' && (
+                              <Check className="h-4 w-4 text-green-500" />
+                            )}
+                            {task.status === 'failed' && (
+                              <AlertCircle className="h-4 w-4 text-red-500" />
+                            )}
+                          </div>
+
+                          {/* 任务信息 */}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium truncate">
+                                {task.projectName}
+                              </span>
+                              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                                {TASK_TYPE_NAMES[task.type]}
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {task.fileName || task.message}
+                            </p>
+                            {task.status === 'running' && (
+                              <div className="mt-1.5 flex items-center gap-2">
+                                <div className="h-1.5 flex-1 rounded-full bg-muted">
+                                  <div
+                                    className="h-full rounded-full bg-primary transition-all"
+                                    style={{ width: `${task.progress}%` }}
+                                  />
+                                </div>
+                                <span className="text-[10px] text-muted-foreground">
+                                  {task.progress}%
+                                </span>
+                              </div>
+                            )}
+                            {task.status === 'failed' && task.error && (
+                              <p className="mt-1 text-xs text-red-500 truncate">
+                                {task.error}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* 时间和操作 */}
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                              {formatRelativeTime(task.completedAt || task.createdAt)}
+                            </span>
+                            {(task.status === 'completed' || task.status === 'failed') && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-5 w-5"
+                                onClick={() => removeTask(task.id)}
+                              >
+                                <X className="h-3 w-3" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </ScrollArea>
+
+                {recentTasks.length > 0 && (
+                  <div className="border-t p-2">
+                    <Button
+                      variant="ghost"
+                      className="w-full justify-between text-sm"
+                      onClick={() => navigate('/tasks')}
+                    >
+                      查看全部任务
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+              </PopoverContent>
+            </Popover>
+
+            {/* 设置 */}
+            <Button variant="ghost" size="icon">
+              <Settings className="h-5 w-5" />
+            </Button>
           </div>
         </header>
 
@@ -80,48 +264,5 @@ export function MainLayout() {
         </main>
       </div>
     </div>
-  )
-}
-
-function Breadcrumb() {
-  const location = useLocation()
-  const pathnames = location.pathname.split('/').filter((x) => x)
-
-  const breadcrumbMap: Record<string, string> = {
-    projects: '项目列表',
-    new: '新建项目',
-    files: '资料管理',
-    ledger: '项目台账',
-    audit: '审计',
-    risks: '风险报告',
-  }
-
-  return (
-    <nav className="flex items-center gap-1 text-sm">
-      <Link to="/projects" className="text-muted-foreground hover:text-foreground">
-        首页
-      </Link>
-      {pathnames.map((name, index) => {
-        const routeTo = `/${pathnames.slice(0, index + 1).join('/')}`
-        const isLast = index === pathnames.length - 1
-        const displayName = breadcrumbMap[name] || name
-
-        // 跳过 ID 类的路径段
-        if (name.length > 20) return null
-
-        return (
-          <span key={name} className="flex items-center gap-1">
-            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-            {isLast ? (
-              <span className="font-medium">{displayName}</span>
-            ) : (
-              <Link to={routeTo} className="text-muted-foreground hover:text-foreground">
-                {displayName}
-              </Link>
-            )}
-          </span>
-        )
-      })}
-    </nav>
   )
 }

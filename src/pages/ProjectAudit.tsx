@@ -1,406 +1,607 @@
-import { useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useState, useEffect, useMemo } from 'react'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   Play,
   Check,
   X,
   AlertTriangle,
-  HelpCircle,
+  ArrowLeft,
   ChevronDown,
-  ChevronRight,
+  Loader2,
+  Settings,
   FileText,
-  Scale,
-  Filter,
+  CheckCircle2,
+  Circle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Progress } from '@/components/ui/progress'
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
+import { useAuditContext } from '@/contexts/AuditContext'
+import { projectService, projectFileService, fieldValueService, auditRuleService } from '@/services'
 import { cn } from '@/lib/utils'
-import type { AuditRule, AuditRisk, AuditResult } from '@/types'
+import type { AuditResult } from '@/types'
+import type { AuditClue, AuditItem } from '@/services'
 
-// 模拟规则数据
-const mockRules: (AuditRule & { selected?: boolean })[] = [
-  { id: '1', code: 'BOND_001', name: '投标保证金比例检查', description: '检查投标保证金是否超过招标项目估算价的2%', category: '保证金', stage: '投标', isEnabled: true, expression: '', selected: true },
-  { id: '2', code: 'COMM_001', name: '评标委员会人数检查', description: '检查评标委员会成员人数是否为5人以上单数', category: '评标', stage: '评标', isEnabled: true, expression: '', selected: true },
-  { id: '3', code: 'TIME_001', name: '投标截止时间检查', description: '检查投标截止时间与开标时间的间隔', category: '时间', stage: '投标', isEnabled: true, expression: '', selected: true },
-  { id: '4', code: 'QUAL_001', name: '资格条件合规性检查', description: '检查资格条件是否存在限制性条款', category: '资格', stage: '资格审查', isEnabled: true, expression: '', selected: false },
-  { id: '5', code: 'EVAL_001', name: '评标方法合规性检查', description: '检查评标方法是否符合规定', category: '评标', stage: '评标', isEnabled: true, expression: '', selected: false },
-  { id: '6', code: 'PERF_001', name: '履约保证金比例检查', description: '检查履约保证金比例是否在规定范围内', category: '保证金', stage: '定标', isEnabled: true, expression: '', selected: true },
-]
-
-// 模拟审计结果
-const mockResults: AuditRisk[] = [
-  {
-    id: '1',
-    projectId: '1',
-    ruleId: '1',
-    ruleName: '投标保证金比例检查',
-    ruleCode: 'BOND_001',
-    category: '保证金',
-    result: 'fail',
-    severity: 'high',
-    description: '投标保证金金额为100万元，招标项目估算价为5000万元，保证金比例为2%，达到上限',
-    suggestion: '建议核实是否有必要设置最高限额的保证金',
-    usedFields: [
-      { fieldCode: 'bidBond', fieldName: '投标保证金', value: '100万元', sourceFile: '招标文件.pdf' },
-      { fieldCode: 'maxBidPrice', fieldName: '最高投标限价', value: '5000万元', sourceFile: '招标文件.pdf' },
-    ],
-    lawReferences: [
-      {
-        lawDocumentId: '1',
-        lawDocumentName: '招标投标法实施条例',
-        clauseId: '1',
-        clauseNumber: '第二十六条',
-        clauseContent: '招标人在招标文件中要求投标人提交投标保证金的，投标保证金不得超过招标项目估算价的2%。',
-      },
-    ],
-    evidenceRefs: [{ page: 15, snippet: '投标保证金：壹佰万元整' }],
-    createdAt: '2026-01-27T14:00:00Z',
-    updatedAt: '2026-01-27T14:00:00Z',
-  },
-  {
-    id: '2',
-    projectId: '1',
-    ruleId: '2',
-    ruleName: '评标委员会人数检查',
-    ruleCode: 'COMM_001',
-    category: '评标',
-    result: 'fail',
-    severity: 'medium',
-    description: '评标委员会由6名成员组成，不符合单数要求',
-    suggestion: '评标委员会应由5人以上单数组成',
-    usedFields: [
-      { fieldCode: 'evaluationCommittee', fieldName: '评标委员会组成', value: '6人', sourceFile: '招标文件.pdf' },
-    ],
-    lawReferences: [
-      {
-        lawDocumentId: '1',
-        lawDocumentName: '招标投标法',
-        clauseId: '2',
-        clauseNumber: '第三十七条',
-        clauseContent: '评标委员会由招标人的代表和有关技术、经济等方面的专家组成，成员人数为五人以上单数。',
-      },
-    ],
-    evidenceRefs: [{ page: 22, snippet: '评标委员会由6名成员组成' }],
-    createdAt: '2026-01-27T14:00:00Z',
-    updatedAt: '2026-01-27T14:00:00Z',
-  },
-  {
-    id: '3',
-    projectId: '1',
-    ruleId: '3',
-    ruleName: '投标截止时间检查',
-    ruleCode: 'TIME_001',
-    category: '时间',
-    result: 'pass',
-    severity: 'low',
-    description: '投标截止时间与开标时间间隔符合要求',
-    suggestion: '',
-    usedFields: [
-      { fieldCode: 'bidDeadline', fieldName: '投标截止时间', value: '2026-02-14 17:00', sourceFile: '招标文件.pdf' },
-      { fieldCode: 'bidOpeningTime', fieldName: '开标时间', value: '2026-02-15 09:00', sourceFile: '招标文件.pdf' },
-    ],
-    lawReferences: [],
-    evidenceRefs: [],
-    createdAt: '2026-01-27T14:00:00Z',
-    updatedAt: '2026-01-27T14:00:00Z',
-  },
-]
+interface RuleData {
+  id: number
+  code: string
+  name: string
+  description?: string
+  category?: string
+  selected: boolean
+}
 
 export function ProjectAudit() {
   const { id: projectId } = useParams()
-  const [rules, setRules] = useState(mockRules)
-  const [results, setResults] = useState<AuditRisk[]>([])
-  const [isRunning, setIsRunning] = useState(false)
-  const [categoryFilter, setCategoryFilter] = useState<string>('all')
-  const [expandedResults, setExpandedResults] = useState<string[]>([])
+  const navigate = useNavigate()
+  const { getSession, startAudit, confirmResult, resetAudit, hasRunningAudit } = useAuditContext()
 
-  const handleToggleRule = (ruleId: string) => {
-    setRules((prev) =>
-      prev.map((r) => (r.id === ruleId ? { ...r, selected: !r.selected } : r))
+  // 规则列表
+  const [rules, setRules] = useState<RuleData[]>([])
+  const [isLoadingRules, setIsLoadingRules] = useState(true)
+
+  // 项目数据
+  const [projectName, setProjectName] = useState('')
+  const [auditItems, setAuditItems] = useState<AuditItem[]>([])
+  const [isLoadingData, setIsLoadingData] = useState(true)
+
+  // 确认中的规则
+  const [confirmingCode, setConfirmingCode] = useState<string | null>(null)
+
+  // 展开状态
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  // 获取当前项目的审计会话
+  const session = projectId ? getSession(projectId) : undefined
+  const isRunning = session?.isRunning || false
+  const results = session?.results || []
+  const progress = session?.progress || { current: 0, total: 0 }
+  
+  // 使用 useMemo 避免每次渲染创建新的 Set
+  const emptySet = useMemo(() => new Set<string>(), [])
+  const confirmedRules = session?.confirmedRules || emptySet
+
+  // 加载审计规则（从后端）
+  useEffect(() => {
+    async function loadRules() {
+      try {
+        setIsLoadingRules(true)
+        const data = await auditRuleService.getList()
+        // 只加载启用的规则
+        const enabledRules = (data || []).filter(rule => rule.isEnabled !== false)
+        setRules(enabledRules.map(rule => ({
+          id: rule.id,
+          code: rule.code,
+          name: rule.name,
+          description: rule.description,
+          category: rule.category,
+          selected: true,
+        })))
+      } catch (error) {
+        console.error('加载审计规则失败:', error)
+      } finally {
+        setIsLoadingRules(false)
+      }
+    }
+    loadRules()
+  }, [])
+
+  // 加载项目数据用于审计
+  useEffect(() => {
+    async function loadProjectData() {
+      if (!projectId) return
+
+      try {
+        setIsLoadingData(true)
+
+        // 获取项目信息
+        const project = await projectService.getById(projectId)
+        const currentProjectName = (project as any).name || project.projectName || '未命名项目'
+        setProjectName(currentProjectName)
+
+        // 使用新的统一 API 获取所有文件的所有字段
+        const allFields = await fieldValueService.getAllFields(projectId)
+        console.log('[审计] 获取到字段总数:', allFields.length)
+
+        // 转换为审计项目格式
+        const items: AuditItem[] = allFields
+          .filter(f => f.value)
+          .map(f => ({
+            来源: currentProjectName,
+            文件: f.fileName || f.docTypeName || (f.isTender ? '招标文件' : '未知文件'),
+            字段: f.fieldName || f.fieldCode,
+            内容: f.value!,
+          }))
+
+        console.log('[审计] 总计待审查项目:', items.length, '条')
+        setAuditItems(items)
+      } catch (error) {
+        console.error('加载项目数据失败:', error)
+      } finally {
+        setIsLoadingData(false)
+      }
+    }
+
+    loadProjectData()
+  }, [projectId])
+
+  const handleToggleRule = (code: string) => {
+    setRules(prev =>
+      prev.map(r => (r.code === code ? { ...r, selected: !r.selected } : r))
     )
   }
 
   const handleSelectAll = () => {
-    setRules((prev) => prev.map((r) => ({ ...r, selected: true })))
+    const allSelected = rules.every(r => r.selected)
+    setRules(prev => prev.map(r => ({ ...r, selected: !allSelected })))
   }
 
-  const handleDeselectAll = () => {
-    setRules((prev) => prev.map((r) => ({ ...r, selected: false })))
-  }
+  const handleRunAudit = () => {
+    if (!projectId) return
 
-  const handleRunAudit = async () => {
-    setIsRunning(true)
-    setResults([])
-    
-    // 模拟逐条执行
-    for (const result of mockResults) {
-      await new Promise((resolve) => setTimeout(resolve, 800))
-      setResults((prev) => [...prev, result])
+    const selectedRules = rules.filter(r => r.selected)
+
+    if (selectedRules.length === 0) {
+      return
     }
-    
-    setIsRunning(false)
-    setExpandedResults(mockResults.map((r) => r.id))
+
+    // 转换为 AuditClue 格式传给智能体
+    const clues: AuditClue[] = selectedRules.map(rule => ({
+      规则编码: rule.code,
+      规则名称: rule.name,
+      规则描述: rule.description || '',
+    }))
+
+    // 启动后台审计
+    startAudit(projectId, projectName, clues, auditItems)
   }
 
-  const toggleExpand = (resultId: string) => {
-    setExpandedResults((prev) =>
-      prev.includes(resultId) ? prev.filter((id) => id !== resultId) : [...prev, resultId]
-    )
+  // 确认审计结果
+  const handleConfirm = async (ruleCode: string) => {
+    if (!projectId) return
+
+    const result = results.find(r => r.ruleCode === ruleCode)
+    if (!result) return
+
+    setConfirmingCode(ruleCode)
+
+    try {
+      // 如果是有问题或需要复核，保存到风险点
+      const saveAsRisk = result.result === 'fail' || result.result === 'review'
+      console.log('[确认审计] 开始确认:', { projectId, ruleCode, saveAsRisk, result: result.result })
+      await confirmResult(projectId, ruleCode, saveAsRisk)
+      console.log('[确认审计] 确认成功')
+    } catch (error) {
+      console.error('确认失败:', error)
+      const errorMsg = error instanceof Error ? error.message : '未知错误'
+      alert(`确认失败: ${errorMsg}`)
+    } finally {
+      setConfirmingCode(null)
+    }
   }
 
+  // 一键确认所有结果
+  const handleConfirmAll = async () => {
+    if (!projectId) return
+
+    const unconfirmed = results.filter(r => !confirmedRules.has(r.ruleCode))
+
+    for (const result of unconfirmed) {
+      await handleConfirm(result.ruleCode)
+    }
+  }
+
+  // 重置审计
+  const handleReset = () => {
+    if (!projectId) return
+    resetAudit(projectId)
+  }
+
+  const selectedCount = rules.filter(r => r.selected).length
+
+  // 计算统计信息
+  const stats = useMemo(() => {
+    return {
+      total: results.length,
+      pass: results.filter(r => r.result === 'pass').length,
+      fail: results.filter(r => r.result === 'fail').length,
+      review: results.filter(r => r.result === 'review').length,
+      missing: results.filter(r => r.result === 'missing').length,
+    }
+  }, [results])
+
+  const confirmedCount = confirmedRules.size
+  const allConfirmed = results.length > 0 && confirmedCount === results.length
+
+  // 获取结果图标
   const getResultIcon = (result: AuditResult) => {
     switch (result) {
       case 'pass':
         return <Check className="h-5 w-5 text-green-600" />
       case 'fail':
         return <X className="h-5 w-5 text-red-600" />
-      case 'review':
-        return <AlertTriangle className="h-5 w-5 text-yellow-600" />
       case 'missing':
-        return <HelpCircle className="h-5 w-5 text-gray-400" />
+        return <AlertTriangle className="h-5 w-5 text-gray-500" />
+      default: // review
+        return <AlertTriangle className="h-5 w-5 text-amber-500" />
     }
   }
 
-  const categories = [...new Set(rules.map((r) => r.category))]
-  const selectedCount = rules.filter((r) => r.selected).length
-  const filteredRules = categoryFilter === 'all' ? rules : rules.filter((r) => r.category === categoryFilter)
+  // 获取结果文本
+  const getResultText = (result: AuditResult) => {
+    switch (result) {
+      case 'pass':
+        return '不存在问题'
+      case 'fail':
+        return '存在问题'
+      case 'missing':
+        return '信息缺失'
+      default:
+        return '需要复核'
+    }
+  }
 
-  const passCount = results.filter((r) => r.result === 'pass').length
-  const failCount = results.filter((r) => r.result === 'fail').length
+  // 获取结果边框/背景色
+  const getResultStyles = (result: AuditResult) => {
+    switch (result) {
+      case 'pass':
+        return 'border-green-300 bg-green-50/80 hover:bg-green-50'
+      case 'fail':
+        return 'border-red-300 bg-red-50/80 hover:bg-red-50'
+      case 'missing':
+        return 'border-gray-300 bg-gray-50/80 hover:bg-gray-50'
+      default:
+        return 'border-amber-300 bg-amber-50/80 hover:bg-amber-50'
+    }
+  }
+
+  const isLoading = isLoadingRules || isLoadingData
 
   return (
-    <div className="container mx-auto py-8">
-      {/* 页面头部 */}
+    <div className="p-6 max-w-3xl mx-auto">
+      {/* 返回 */}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="mb-4 -ml-2"
+        onClick={() => navigate(`/projects/${projectId}`)}
+      >
+        <ArrowLeft className="mr-1 h-4 w-4" />
+        返回
+      </Button>
+
+      {/* 头部 */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">审计</h1>
-          <p className="mt-1 text-muted-foreground">
-            选择审计规则并执行检查
+          <h1 className="text-xl font-semibold">审计执行</h1>
+          <p className="text-sm text-muted-foreground">
+            {projectName}
+            {auditItems.length > 0 && ` · ${auditItems.length} 条数据待审计`}
           </p>
         </div>
-        <Button onClick={handleRunAudit} disabled={isRunning || selectedCount === 0}>
-          <Play className="mr-2 h-4 w-4" />
-          {isRunning ? '执行中...' : `执行审计 (${selectedCount})`}
-        </Button>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* 规则选择 */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base">审计规则</CardTitle>
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={handleSelectAll}>
-                  全选
-                </Button>
-                <Button variant="ghost" size="sm" onClick={handleDeselectAll}>
-                  清空
-                </Button>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-muted-foreground" />
-              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                <SelectTrigger className="h-8 w-32">
-                  <SelectValue placeholder="类别" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">全部类别</SelectItem>
-                  {categories.map((cat) => (
-                    <SelectItem key={cat} value={cat}>
-                      {cat}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-[500px]">
-              <div className="space-y-2">
-                {filteredRules.map((rule) => (
-                  <div
-                    key={rule.id}
-                    className={cn(
-                      'flex items-start gap-3 rounded-lg border p-3 transition-colors',
-                      rule.selected && 'border-primary bg-primary/5'
-                    )}
-                  >
-                    <Checkbox
-                      checked={rule.selected}
-                      onCheckedChange={() => handleToggleRule(rule.id)}
-                    />
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium">{rule.name}</span>
-                        <Badge variant="outline" className="text-xs">
-                          {rule.category}
-                        </Badge>
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {rule.description}
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {rule.code} · {rule.stage}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
-          </CardContent>
-        </Card>
-
-        {/* 审计结果 */}
-        <div className="lg:col-span-2">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base">审计结果</CardTitle>
-                {results.length > 0 && (
-                  <div className="flex items-center gap-4 text-sm">
-                    <span className="flex items-center gap-1 text-green-600">
-                      <Check className="h-4 w-4" />
-                      通过 {passCount}
-                    </span>
-                    <span className="flex items-center gap-1 text-red-600">
-                      <X className="h-4 w-4" />
-                      不通过 {failCount}
-                    </span>
-                  </div>
-                )}
-              </div>
-              <CardDescription>
-                {isRunning
-                  ? `正在执行审计规则... (${results.length}/${selectedCount})`
-                  : results.length > 0
-                  ? `共执行 ${results.length} 条规则`
-                  : '选择规则后点击"执行审计"开始检查'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {results.length === 0 && !isRunning ? (
-                <div className="flex flex-col items-center justify-center py-16 text-center">
-                  <Scale className="h-12 w-12 text-muted-foreground/50" />
-                  <p className="mt-4 text-muted-foreground">暂无审计结果</p>
-                </div>
-              ) : (
-                <ScrollArea className="h-[500px]">
-                  <div className="space-y-3">
-                    {results.map((result) => (
-                      <Collapsible
-                        key={result.id}
-                        open={expandedResults.includes(result.id)}
-                        onOpenChange={() => toggleExpand(result.id)}
-                      >
-                        <div
-                          className={cn(
-                            'rounded-lg border',
-                            result.result === 'fail' && 'border-red-200 bg-red-50/50',
-                            result.result === 'pass' && 'border-green-200 bg-green-50/50'
-                          )}
-                        >
-                          <CollapsibleTrigger className="flex w-full items-center gap-3 p-4">
-                            {getResultIcon(result.result)}
-                            <div className="flex-1 text-left">
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium">{result.ruleName}</span>
-                                <Badge
-                                  variant={result.severity === 'high' ? 'destructive' : 'secondary'}
-                                  className="text-xs"
-                                >
-                                  {result.severity === 'high' ? '高风险' : result.severity === 'medium' ? '中风险' : '低风险'}
-                                </Badge>
-                              </div>
-                              <p className="mt-1 text-sm text-muted-foreground line-clamp-1">
-                                {result.description}
-                              </p>
-                            </div>
-                            {expandedResults.includes(result.id) ? (
-                              <ChevronDown className="h-4 w-4" />
-                            ) : (
-                              <ChevronRight className="h-4 w-4" />
-                            )}
-                          </CollapsibleTrigger>
-                          
-                          <CollapsibleContent>
-                            <Separator />
-                            <div className="space-y-4 p-4">
-                              {/* 使用的字段 */}
-                              <div>
-                                <h4 className="mb-2 text-sm font-medium">使用的字段</h4>
-                                <div className="space-y-1">
-                                  {result.usedFields.map((field, idx) => (
-                                    <div key={idx} className="flex items-center justify-between rounded bg-muted/50 px-3 py-2 text-sm">
-                                      <span>{field.fieldName}</span>
-                                      <span className="text-muted-foreground">{field.value}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                              
-                              {/* 法规依据 */}
-                              {result.lawReferences.length > 0 && (
-                                <div>
-                                  <h4 className="mb-2 text-sm font-medium">法规依据</h4>
-                                  {result.lawReferences.map((law, idx) => (
-                                    <div key={idx} className="rounded border bg-muted/30 p-3">
-                                      <p className="text-sm font-medium">{law.lawDocumentName} {law.clauseNumber}</p>
-                                      <p className="mt-1 text-sm text-muted-foreground">{law.clauseContent}</p>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                              
-                              {/* 建议 */}
-                              {result.suggestion && (
-                                <div>
-                                  <h4 className="mb-2 text-sm font-medium">处理建议</h4>
-                                  <p className="text-sm text-muted-foreground">{result.suggestion}</p>
-                                </div>
-                              )}
-                              
-                              {/* 证据 */}
-                              {result.evidenceRefs.length > 0 && (
-                                <div>
-                                  <h4 className="mb-2 text-sm font-medium">原文证据</h4>
-                                  {result.evidenceRefs.map((evidence, idx) => (
-                                    <Button key={idx} variant="outline" size="sm" className="gap-2">
-                                      <FileText className="h-3 w-3" />
-                                      第 {evidence.page} 页
-                                    </Button>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </CollapsibleContent>
-                        </div>
-                      </Collapsible>
-                    ))}
-                  </div>
-                </ScrollArea>
-              )}
-            </CardContent>
-          </Card>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            asChild
+          >
+            <Link to="/audit-rules">
+              <Settings className="mr-1 h-4 w-4" />
+              规则配置
+            </Link>
+          </Button>
+          <Button
+            onClick={handleRunAudit}
+            disabled={isRunning || selectedCount === 0 || isLoading}
+          >
+            {isRunning ? (
+              <>
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                执行中 ({progress.current}/{progress.total})
+              </>
+            ) : (
+              <>
+                <Play className="mr-1 h-4 w-4" />
+                执行审计 ({selectedCount})
+              </>
+            )}
+          </Button>
         </div>
       </div>
+
+      {/* 执行进度 */}
+      {isRunning && (
+        <div className="mb-6">
+          <div className="flex items-center justify-between text-sm mb-2">
+            <span className="text-muted-foreground">{progress.currentRule}</span>
+            <span>{progress.current}/{progress.total}</span>
+          </div>
+          <Progress
+            value={progress.total > 0 ? (progress.current / progress.total) * 100 : 0}
+            className="h-2"
+          />
+        </div>
+      )}
+
+      {/* 加载中 */}
+      {isLoading && (
+        <div className="py-12 text-center">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+          <p className="mt-4 text-muted-foreground">加载中...</p>
+        </div>
+      )}
+
+      {/* 无规则提示 */}
+      {!isLoading && rules.length === 0 && (
+        <div className="rounded-xl border border-dashed p-8 text-center">
+          <FileText className="mx-auto h-12 w-12 text-muted-foreground/50" />
+          <p className="mt-4 text-muted-foreground">暂无审计规则</p>
+          <Button className="mt-4" asChild>
+            <Link to="/audit-rules">前往添加规则</Link>
+          </Button>
+        </div>
+      )}
+
+      {/* 规则选择 - 未执行时显示 */}
+      {!isLoading && rules.length > 0 && results.length === 0 && !isRunning && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              选择要执行的审计规则 ({selectedCount}/{rules.length})
+            </p>
+            <Button variant="ghost" size="sm" onClick={handleSelectAll}>
+              {rules.every(r => r.selected) ? '取消全选' : '全选'}
+            </Button>
+          </div>
+
+          <div className="space-y-2">
+            {rules.map(rule => (
+              <label
+                key={rule.code}
+                className={cn(
+                  'flex items-start gap-3 rounded-lg border p-4 cursor-pointer transition-colors',
+                  rule.selected && 'border-primary bg-primary/5'
+                )}
+              >
+                <Checkbox
+                  checked={rule.selected}
+                  onCheckedChange={() => handleToggleRule(rule.code)}
+                  className="mt-0.5"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium">{rule.name}</span>
+                    <code className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                      {rule.code}
+                    </code>
+                    {rule.category && (
+                      <span className="text-xs text-primary">{rule.category}</span>
+                    )}
+                  </div>
+                  {rule.description && (
+                    <p className="mt-1 text-sm text-muted-foreground line-clamp-1">
+                      {rule.description}
+                    </p>
+                  )}
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 审计结果 */}
+      {results.length > 0 && (
+        <div className="space-y-4">
+          {/* 统计和确认进度 */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4 text-sm">
+              <span>执行完成 {progress.current}/{progress.total}</span>
+              {stats.pass > 0 && (
+                <span className="flex items-center gap-1 text-green-600">
+                  <Check className="h-4 w-4" />
+                  不存在问题 {stats.pass}
+                </span>
+              )}
+              {stats.fail > 0 && (
+                <span className="flex items-center gap-1 text-red-600">
+                  <X className="h-4 w-4" />
+                  存在问题 {stats.fail}
+                </span>
+              )}
+              {stats.review > 0 && (
+                <span className="flex items-center gap-1 text-amber-600">
+                  <AlertTriangle className="h-4 w-4" />
+                  需要复核 {stats.review}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">
+                已确认 {confirmedCount}/{results.length}
+              </span>
+              {!allConfirmed && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleConfirmAll}
+                  disabled={confirmingCode !== null}
+                >
+                  {confirmingCode ? (
+                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="mr-1 h-4 w-4" />
+                  )}
+                  全部确认
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* 结果列表 */}
+          <div className="space-y-2">
+            {results.map(result => (
+              <Collapsible
+                key={result.ruleCode}
+                open={expandedId === result.ruleCode}
+                onOpenChange={() =>
+                  setExpandedId(expandedId === result.ruleCode ? null : result.ruleCode)
+                }
+              >
+                <CollapsibleTrigger className="w-full">
+                  <div
+                    className={cn(
+                      'flex items-center gap-3 rounded-lg border p-4 text-left transition-colors',
+                      getResultStyles(result.result)
+                    )}
+                  >
+                    {getResultIcon(result.result)}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium">{result.ruleName}</span>
+                        <code className="text-xs text-muted-foreground bg-white/50 px-1.5 py-0.5 rounded">
+                          {result.ruleCode}
+                        </code>
+                      </div>
+                      {result.description && (
+                        <p className="mt-1 text-sm text-muted-foreground line-clamp-1">
+                          {result.description}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {/* 确认状态标记 */}
+                      {confirmedRules.has(result.ruleCode) ? (
+                        <span className="flex items-center gap-1 text-xs text-green-600 bg-green-100 px-2 py-1 rounded-full">
+                          <CheckCircle2 className="h-3 w-3" />
+                          {(result.result === 'fail' || result.result === 'review') ? '已加入风险' : '已确认'}
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">
+                          <Circle className="h-3 w-3" />
+                          待确认
+                        </span>
+                      )}
+                      <span className={cn(
+                        'text-xs font-medium px-2 py-1 rounded-full',
+                        result.result === 'pass' && 'bg-green-100 text-green-700',
+                        result.result === 'fail' && 'bg-red-100 text-red-700',
+                        result.result === 'review' && 'bg-amber-100 text-amber-700',
+                        result.result === 'missing' && 'bg-gray-100 text-gray-700'
+                      )}>
+                        {getResultText(result.result)}
+                      </span>
+                      <ChevronDown
+                        className={cn(
+                          'h-4 w-4 transition-transform text-muted-foreground',
+                          expandedId === result.ruleCode && 'rotate-180'
+                        )}
+                      />
+                    </div>
+                  </div>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="mt-2 rounded-lg border bg-muted/30 p-4 text-sm space-y-3">
+                    {result.description ? (
+                      <p className="whitespace-pre-wrap">{result.description}</p>
+                    ) : (
+                      <p className="text-muted-foreground italic">暂无审计结论</p>
+                    )}
+                    {result.suggestion && (
+                      <p className="text-muted-foreground">
+                        <strong>建议：</strong>
+                        {result.suggestion}
+                      </p>
+                    )}
+                    {result.evidence && (
+                      <p className="text-muted-foreground">
+                        <strong>证据：</strong>
+                        {result.evidence}
+                      </p>
+                    )}
+                    {result.lawReference && (
+                      <p className="text-xs text-muted-foreground border-t pt-2">
+                        <strong>依据：</strong>
+                        {result.lawReference}
+                      </p>
+                    )}
+                    {result.rawResponse && !result.description && (
+                      <details className="text-xs text-muted-foreground border-t pt-2">
+                        <summary className="cursor-pointer">原始响应</summary>
+                        <pre className="mt-2 p-2 bg-muted rounded overflow-auto max-h-48">
+                          {result.rawResponse}
+                        </pre>
+                      </details>
+                    )}
+                    
+                    {/* 确认按钮 */}
+                    <div className="pt-3 border-t flex items-center justify-between">
+                      <div className="text-xs text-muted-foreground">
+                        {result.result === 'fail' && '确认后将添加到风险点'}
+                        {result.result === 'review' && '确认后将添加到风险点'}
+                        {result.result === 'pass' && '确认后标记为已审核'}
+                      </div>
+                      {confirmedRules.has(result.ruleCode) ? (
+                        <div className="flex items-center gap-2 text-sm text-green-600">
+                          <CheckCircle2 className="h-4 w-4" />
+                          <span>
+                            {(result.result === 'fail' || result.result === 'review')
+                              ? '已加入风险点' 
+                              : '已确认通过'}
+                          </span>
+                        </div>
+                      ) : (
+                        <Button
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleConfirm(result.ruleCode)
+                          }}
+                          disabled={confirmingCode === result.ruleCode}
+                        >
+                          {confirmingCode === result.ruleCode ? (
+                            <>
+                              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                              确认中...
+                            </>
+                          ) : (
+                            <>
+                              <Check className="mr-1 h-4 w-4" />
+                              确认结果
+                            </>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            ))}
+          </div>
+
+          {/* 操作按钮 */}
+          <div className="pt-4 flex gap-2">
+            <Button variant="outline" onClick={handleReset}>
+              重新审计
+            </Button>
+            <Button onClick={() => navigate(`/projects/${projectId}/risks`)}>
+              查看风险报告
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* 错误提示 */}
+      {session?.error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4">
+          <p className="text-sm text-red-700">{session.error}</p>
+        </div>
+      )}
     </div>
   )
 }

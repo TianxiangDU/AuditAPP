@@ -1,22 +1,19 @@
-import { useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import {
   Download,
-  FileText,
+  ArrowLeft,
   Edit2,
   Save,
   X,
   AlertTriangle,
-  ChevronDown,
-  ChevronRight,
-  ExternalLink,
+  Loader2,
+  FileText,
+  CheckCircle2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
 import {
   Select,
   SelectContent,
@@ -24,368 +21,309 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
-import { cn, getSeverityColor, getSeverityText } from '@/lib/utils'
+import { auditService, projectService } from '@/services'
+import { cn, getSeverityText } from '@/lib/utils'
+import { exportRiskReportToExcel, formatDateForDisplay } from '@/utils/exportUtils'
 import type { AuditRisk, RiskSeverity } from '@/types'
-
-// 模拟风险数据
-const mockRisks: AuditRisk[] = [
-  {
-    id: '1',
-    projectId: '1',
-    ruleId: '1',
-    ruleName: '投标保证金比例检查',
-    ruleCode: 'BOND_001',
-    category: '保证金',
-    result: 'fail',
-    severity: 'high',
-    description: '投标保证金金额为100万元，招标项目估算价为5000万元，保证金比例为2%，达到上限',
-    suggestion: '建议核实是否有必要设置最高限额的保证金',
-    usedFields: [
-      { fieldCode: 'bidBond', fieldName: '投标保证金', value: '100万元', sourceFile: '招标文件.pdf' },
-      { fieldCode: 'maxBidPrice', fieldName: '最高投标限价', value: '5000万元', sourceFile: '招标文件.pdf' },
-    ],
-    lawReferences: [
-      {
-        lawDocumentId: '1',
-        lawDocumentName: '招标投标法实施条例',
-        clauseId: '1',
-        clauseNumber: '第二十六条',
-        clauseContent: '招标人在招标文件中要求投标人提交投标保证金的，投标保证金不得超过招标项目估算价的2%。',
-      },
-    ],
-    evidenceRefs: [{ page: 15, snippet: '投标保证金：壹佰万元整' }],
-    createdAt: '2026-01-27T14:00:00Z',
-    updatedAt: '2026-01-27T14:00:00Z',
-  },
-  {
-    id: '2',
-    projectId: '1',
-    ruleId: '2',
-    ruleName: '评标委员会人数检查',
-    ruleCode: 'COMM_001',
-    category: '评标',
-    result: 'fail',
-    severity: 'medium',
-    description: '评标委员会由6名成员组成，不符合单数要求',
-    suggestion: '评标委员会应由5人以上单数组成',
-    usedFields: [
-      { fieldCode: 'evaluationCommittee', fieldName: '评标委员会组成', value: '6人', sourceFile: '招标文件.pdf' },
-    ],
-    lawReferences: [
-      {
-        lawDocumentId: '1',
-        lawDocumentName: '招标投标法',
-        clauseId: '2',
-        clauseNumber: '第三十七条',
-        clauseContent: '评标委员会由招标人的代表和有关技术、经济等方面的专家组成，成员人数为五人以上单数。',
-      },
-    ],
-    evidenceRefs: [{ page: 22, snippet: '评标委员会由6名成员组成' }],
-    createdAt: '2026-01-27T14:00:00Z',
-    updatedAt: '2026-01-27T14:00:00Z',
-  },
-  {
-    id: '3',
-    projectId: '1',
-    ruleId: '6',
-    ruleName: '履约保证金比例检查',
-    ruleCode: 'PERF_001',
-    category: '保证金',
-    result: 'fail',
-    severity: 'low',
-    description: '履约保证金比例设置为中标合同金额的15%，超过规定的10%上限',
-    suggestion: '根据规定，履约保证金一般不得超过中标合同金额的10%',
-    usedFields: [
-      { fieldCode: 'performanceBondRate', fieldName: '履约保证金金额百分比', value: '15%', sourceFile: '招标文件.pdf' },
-    ],
-    lawReferences: [],
-    evidenceRefs: [{ page: 35, snippet: '履约保证金为中标合同金额的15%' }],
-    createdAt: '2026-01-27T14:00:00Z',
-    updatedAt: '2026-01-27T14:00:00Z',
-  },
-]
 
 export function ProjectRisks() {
   const { id: projectId } = useParams()
-  const [risks, setRisks] = useState<AuditRisk[]>(mockRisks)
+  const navigate = useNavigate()
+
+  const [projectName, setProjectName] = useState('')
+  const [risks, setRisks] = useState<AuditRisk[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState<{ description: string; suggestion: string; severity: RiskSeverity }>({
-    description: '',
-    suggestion: '',
-    severity: 'medium',
-  })
-  const [expandedRisks, setExpandedRisks] = useState<string[]>(risks.map((r) => r.id))
+  const [editForm, setEditForm] = useState({ description: '', suggestion: '', severity: 'medium' as RiskSeverity })
   const [isGenerating, setIsGenerating] = useState(false)
+
+  // 加载数据
+  useEffect(() => {
+    async function loadData() {
+      if (!projectId) return
+
+      try {
+        setIsLoading(true)
+        setError(null)
+
+        // 获取项目信息
+        const project = await projectService.getById(projectId)
+        setProjectName((project as any).name || project.projectName || '未命名项目')
+
+        // 获取风险列表
+        const riskList = await auditService.getRisks(projectId)
+        setRisks(riskList || [])
+      } catch (err) {
+        console.error('加载风险列表失败:', err)
+        setError('加载失败')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    loadData()
+  }, [projectId])
 
   const handleEdit = (risk: AuditRisk) => {
     setEditingId(risk.id)
-    setEditForm({
-      description: risk.description,
-      suggestion: risk.suggestion,
-      severity: risk.severity,
-    })
+    setEditForm({ description: risk.description, suggestion: risk.suggestion, severity: risk.severity })
   }
 
-  const handleSave = (riskId: string) => {
-    setRisks((prev) =>
-      prev.map((r) =>
-        r.id === riskId
-          ? { ...r, ...editForm, updatedAt: new Date().toISOString() }
-          : r
+  const handleSave = async (riskId: string) => {
+    try {
+      await auditService.updateRisk(projectId!, riskId, editForm)
+      setRisks((prev) =>
+        prev.map((r) => r.id === riskId ? { ...r, ...editForm } : r)
       )
-    )
-    setEditingId(null)
+      setEditingId(null)
+    } catch (err) {
+      console.error('更新风险失败:', err)
+    }
   }
 
-  const handleCancel = () => {
-    setEditingId(null)
-  }
+  const handleGenerateReport = () => {
+    if (risks.length === 0) return
 
-  const toggleExpand = (riskId: string) => {
-    setExpandedRisks((prev) =>
-      prev.includes(riskId) ? prev.filter((id) => id !== riskId) : [...prev, riskId]
-    )
-  }
-
-  const handleGenerateReport = async () => {
     setIsGenerating(true)
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    setIsGenerating(false)
-    // 模拟下载
-    window.open(`/api/app/projects/${projectId}/report/download`, '_blank')
+
+    // 准备导出数据
+    const exportData = {
+      projectName,
+      exportDate: formatDateForDisplay(new Date()),
+      summary: {
+        high: highCount,
+        medium: mediumCount,
+        low: lowCount,
+        total: risks.length,
+      },
+      risks: risks.map(risk => ({
+        ruleName: risk.ruleName || '未命名规则',
+        ruleCode: risk.ruleCode || '-',
+        severity: risk.severity || 'medium',
+        description: risk.description || '暂无描述',
+        suggestion: risk.suggestion || '暂无建议',
+      })),
+    }
+
+    try {
+      exportRiskReportToExcel(exportData)
+    } catch (err) {
+      console.error('导出失败:', err)
+      alert('导出失败，请重试')
+    } finally {
+      setIsGenerating(false)
+    }
   }
 
-  const highCount = risks.filter((r) => r.severity === 'high').length
-  const mediumCount = risks.filter((r) => r.severity === 'medium').length
-  const lowCount = risks.filter((r) => r.severity === 'low').length
+  const getSeverityStyle = (severity: RiskSeverity) => {
+    if (severity === 'high') return 'bg-red-100 text-red-700 border-red-200'
+    if (severity === 'medium') return 'bg-amber-100 text-amber-700 border-amber-200'
+    return 'bg-blue-100 text-blue-700 border-blue-200'
+  }
+
+  const highCount = risks.filter(r => r.severity === 'high').length
+  const mediumCount = risks.filter(r => r.severity === 'medium').length
+  const lowCount = risks.filter(r => r.severity === 'low').length
 
   return (
-    <div className="container mx-auto py-8">
-      {/* 页面头部 */}
+    <div className="mx-auto max-w-3xl px-6 py-8">
+      {/* 返回 */}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="mb-4 -ml-2"
+        onClick={() => navigate(`/projects/${projectId}`)}
+      >
+        <ArrowLeft className="mr-1 h-4 w-4" />
+        返回
+      </Button>
+
+      {/* 头部 */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">风险报告</h1>
-          <p className="mt-1 text-muted-foreground">
-            查看和编辑审计风险，生成报告
-          </p>
+          <h1 className="text-xl font-semibold">风险报告</h1>
+          <p className="text-sm text-muted-foreground">{projectName}</p>
         </div>
-        <Button onClick={handleGenerateReport} disabled={isGenerating}>
-          <Download className="mr-2 h-4 w-4" />
-          {isGenerating ? '生成中...' : '生成并下载报告'}
+        <Button
+          onClick={handleGenerateReport}
+          disabled={isGenerating || risks.length === 0}
+        >
+          {isGenerating ? (
+            <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+          ) : (
+            <Download className="mr-1 h-4 w-4" />
+          )}
+          导出报告
         </Button>
       </div>
 
-      {/* 风险统计 */}
-      <div className="mb-6 grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>风险总数</CardDescription>
-            <CardTitle className="text-2xl">{risks.length}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card className="border-red-200 bg-red-50/50">
-          <CardHeader className="pb-2">
-            <CardDescription>高风险</CardDescription>
-            <CardTitle className="text-2xl text-red-600">{highCount}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card className="border-yellow-200 bg-yellow-50/50">
-          <CardHeader className="pb-2">
-            <CardDescription>中风险</CardDescription>
-            <CardTitle className="text-2xl text-yellow-600">{mediumCount}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card className="border-blue-200 bg-blue-50/50">
-          <CardHeader className="pb-2">
-            <CardDescription>低风险</CardDescription>
-            <CardTitle className="text-2xl text-blue-600">{lowCount}</CardTitle>
-          </CardHeader>
-        </Card>
-      </div>
+      {/* 加载中 */}
+      {isLoading && (
+        <div className="py-12 text-center">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+          <p className="mt-4 text-muted-foreground">加载中...</p>
+        </div>
+      )}
 
-      {/* 风险清单 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">风险清单</CardTitle>
-          <CardDescription>点击风险项可展开查看详情，支持编辑描述和建议</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ScrollArea className="h-[600px]">
-            <div className="space-y-4">
-              {risks.map((risk, index) => (
-                <Collapsible
-                  key={risk.id}
-                  open={expandedRisks.includes(risk.id)}
-                  onOpenChange={() => toggleExpand(risk.id)}
-                >
-                  <div
-                    className={cn(
-                      'rounded-lg border',
-                      getSeverityColor(risk.severity)
-                    )}
-                  >
-                    <CollapsibleTrigger className="flex w-full items-center gap-3 p-4">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-background font-medium">
-                        {index + 1}
-                      </div>
-                      <div className="flex-1 text-left">
-                        <div className="flex items-center gap-2">
-                          <AlertTriangle className={cn(
-                            'h-4 w-4',
-                            risk.severity === 'high' && 'text-red-600',
-                            risk.severity === 'medium' && 'text-yellow-600',
-                            risk.severity === 'low' && 'text-blue-600'
-                          )} />
-                          <span className="font-medium">{risk.ruleName}</span>
-                          <Badge variant="outline" className="text-xs">
-                            {risk.category}
-                          </Badge>
-                          <Badge className={cn('text-xs', getSeverityColor(risk.severity))}>
-                            {getSeverityText(risk.severity)}
-                          </Badge>
-                        </div>
-                        <p className="mt-1 text-sm text-muted-foreground line-clamp-1">
-                          {risk.description}
-                        </p>
-                      </div>
-                      {expandedRisks.includes(risk.id) ? (
-                        <ChevronDown className="h-4 w-4" />
-                      ) : (
-                        <ChevronRight className="h-4 w-4" />
-                      )}
-                    </CollapsibleTrigger>
-                    
-                    <CollapsibleContent>
-                      <Separator />
-                      <div className="p-4">
-                        {editingId === risk.id ? (
-                          // 编辑模式
-                          <div className="space-y-4">
-                            <div>
-                              <label className="mb-1 block text-sm font-medium">风险等级</label>
-                              <Select
-                                value={editForm.severity}
-                                onValueChange={(v) => setEditForm((prev) => ({ ...prev, severity: v as RiskSeverity }))}
-                              >
-                                <SelectTrigger className="w-32">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="high">高风险</SelectItem>
-                                  <SelectItem value="medium">中风险</SelectItem>
-                                  <SelectItem value="low">低风险</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div>
-                              <label className="mb-1 block text-sm font-medium">问题描述</label>
-                              <Textarea
-                                value={editForm.description}
-                                onChange={(e) => setEditForm((prev) => ({ ...prev, description: e.target.value }))}
-                                rows={3}
-                              />
-                            </div>
-                            <div>
-                              <label className="mb-1 block text-sm font-medium">处理建议</label>
-                              <Textarea
-                                value={editForm.suggestion}
-                                onChange={(e) => setEditForm((prev) => ({ ...prev, suggestion: e.target.value }))}
-                                rows={2}
-                              />
-                            </div>
-                            <div className="flex justify-end gap-2">
-                              <Button variant="ghost" size="sm" onClick={handleCancel}>
-                                <X className="mr-1 h-3 w-3" />
-                                取消
-                              </Button>
-                              <Button size="sm" onClick={() => handleSave(risk.id)}>
-                                <Save className="mr-1 h-3 w-3" />
-                                保存
-                              </Button>
-                            </div>
-                          </div>
-                        ) : (
-                          // 查看模式
-                          <div className="space-y-4">
-                            <div className="flex justify-end">
-                              <Button variant="ghost" size="sm" onClick={() => handleEdit(risk)}>
-                                <Edit2 className="mr-1 h-3 w-3" />
-                                编辑
-                              </Button>
-                            </div>
-                            
-                            <div>
-                              <h4 className="mb-1 text-sm font-medium">问题描述</h4>
-                              <p className="text-sm text-muted-foreground">{risk.description}</p>
-                            </div>
-                            
-                            <div>
-                              <h4 className="mb-1 text-sm font-medium">处理建议</h4>
-                              <p className="text-sm text-muted-foreground">
-                                {risk.suggestion || '无'}
-                              </p>
-                            </div>
-                            
-                            {/* 使用的字段 */}
-                            <div>
-                              <h4 className="mb-2 text-sm font-medium">涉及字段</h4>
-                              <div className="flex flex-wrap gap-2">
-                                {risk.usedFields.map((field, idx) => (
-                                  <Badge key={idx} variant="secondary" className="text-xs">
-                                    {field.fieldName}: {field.value}
-                                  </Badge>
-                                ))}
-                              </div>
-                            </div>
-                            
-                            {/* 法规依据 */}
-                            {risk.lawReferences.length > 0 && (
-                              <div>
-                                <h4 className="mb-2 text-sm font-medium">法规依据</h4>
-                                {risk.lawReferences.map((law, idx) => (
-                                  <div key={idx} className="rounded border bg-muted/30 p-3">
-                                    <p className="text-sm font-medium">
-                                      {law.lawDocumentName} {law.clauseNumber}
-                                    </p>
-                                    <p className="mt-1 text-sm text-muted-foreground">
-                                      {law.clauseContent}
-                                    </p>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            
-                            {/* 证据 */}
-                            {risk.evidenceRefs.length > 0 && (
-                              <div>
-                                <h4 className="mb-2 text-sm font-medium">原文证据</h4>
-                                <div className="flex flex-wrap gap-2">
-                                  {risk.evidenceRefs.map((evidence, idx) => (
-                                    <Button key={idx} variant="outline" size="sm" className="gap-2">
-                                      <FileText className="h-3 w-3" />
-                                      第 {evidence.page} 页
-                                      <ExternalLink className="h-3 w-3" />
-                                    </Button>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </CollapsibleContent>
-                  </div>
-                </Collapsible>
-              ))}
+      {/* 错误 */}
+      {error && !isLoading && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-center text-red-700">
+          {error}
+        </div>
+      )}
+
+      {/* 无风险 */}
+      {!isLoading && !error && risks.length === 0 && (
+        <div className="py-12 text-center">
+          <CheckCircle2 className="mx-auto h-16 w-16 text-green-500" />
+          <p className="mt-4 text-lg font-medium text-green-700">暂无风险</p>
+          <p className="text-muted-foreground">请先执行审计以发现风险点</p>
+          <Button
+            className="mt-4"
+            onClick={() => navigate(`/projects/${projectId}/audit`)}
+          >
+            执行审计
+          </Button>
+        </div>
+      )}
+
+      {/* 风险统计 */}
+      {!isLoading && !error && risks.length > 0 && (
+        <>
+          <div className="mb-6 grid grid-cols-3 gap-4">
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-red-600" />
+                <span className="font-semibold text-red-700">高风险</span>
+              </div>
+              <p className="mt-2 text-2xl font-bold text-red-700">{highCount}</p>
             </div>
-          </ScrollArea>
-        </CardContent>
-      </Card>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-amber-600" />
+                <span className="font-semibold text-amber-700">中风险</span>
+              </div>
+              <p className="mt-2 text-2xl font-bold text-amber-700">{mediumCount}</p>
+            </div>
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-blue-600" />
+                <span className="font-semibold text-blue-700">低风险</span>
+              </div>
+              <p className="mt-2 text-2xl font-bold text-blue-700">{lowCount}</p>
+            </div>
+          </div>
+
+          {/* 风险列表 */}
+          <div className="space-y-4">
+            {risks.map((risk) => (
+              <div
+                key={risk.id}
+                className={cn(
+                  'rounded-lg border p-4',
+                  getSeverityStyle(risk.severity)
+                )}
+              >
+                {/* 标题行 */}
+                <div className="mb-3 flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold">{risk.ruleName}</span>
+                      <Badge variant="outline" className="text-xs">
+                        {risk.ruleCode}
+                      </Badge>
+                    </div>
+                  </div>
+                  {editingId === risk.id ? (
+                    <div className="flex gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => handleSave(risk.id)}
+                      >
+                        <Save className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => setEditingId(null)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => handleEdit(risk)}
+                    >
+                      <Edit2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+
+                {/* 内容 */}
+                {editingId === risk.id ? (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-xs font-medium">风险描述</label>
+                      <Textarea
+                        value={editForm.description}
+                        onChange={(e) =>
+                          setEditForm({ ...editForm, description: e.target.value })
+                        }
+                        className="mt-1 min-h-[60px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium">处理建议</label>
+                      <Textarea
+                        value={editForm.suggestion}
+                        onChange={(e) =>
+                          setEditForm({ ...editForm, suggestion: e.target.value })
+                        }
+                        className="mt-1 min-h-[60px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium">严重程度</label>
+                      <Select
+                        value={editForm.severity}
+                        onValueChange={(v) =>
+                          setEditForm({ ...editForm, severity: v as RiskSeverity })
+                        }
+                      >
+                        <SelectTrigger className="mt-1 w-32">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="high">高风险</SelectItem>
+                          <SelectItem value="medium">中风险</SelectItem>
+                          <SelectItem value="low">低风险</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2 text-sm">
+                    <p>{risk.description}</p>
+                    {risk.suggestion && (
+                      <p className="opacity-80">
+                        <strong>建议：</strong>
+                        {risk.suggestion}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }
