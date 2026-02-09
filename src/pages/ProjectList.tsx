@@ -117,12 +117,9 @@ export function ProjectList() {
     p.name.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
-  // 按状态分组
-  const inProgressProjects = filteredProjects.filter(
-    p => p.status !== 'completed' && p.status !== 'draft'
-  )
+  // 按状态分组：进行中 / 已完成
+  const inProgressProjects = filteredProjects.filter(p => p.status !== 'completed')
   const completedProjects = filteredProjects.filter(p => p.status === 'completed')
-  const draftProjects = filteredProjects.filter(p => p.status === 'draft')
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -188,18 +185,6 @@ export function ProjectList() {
               projects={completedProjects}
               iconColor="text-green-600"
               bgColor="bg-green-50"
-              onDelete={openDeleteDialog}
-            />
-          )}
-
-          {/* 草稿 */}
-          {draftProjects.length > 0 && (
-            <ProjectSection
-              title="草稿"
-              icon={FolderOpen}
-              projects={draftProjects}
-              iconColor="text-gray-600"
-              bgColor="bg-gray-50"
               onDelete={openDeleteDialog}
             />
           )}
@@ -369,15 +354,15 @@ function ProjectCard({
 // 状态徽章
 function ProjectStatusBadge({ status }: { status: string }) {
   const config: Record<string, { label: string; className: string }> = {
-    draft: { label: '草稿', className: 'bg-gray-100 text-gray-700' },
-    uploading: { label: '上传中', className: 'bg-blue-100 text-blue-700 animate-pulse' },
-    parsing: { label: '解析中', className: 'bg-blue-100 text-blue-700 animate-pulse' },
-    extracting: { label: '提取中', className: 'bg-indigo-100 text-indigo-700 animate-pulse' },
-    confirming: { label: '待确认', className: 'bg-amber-100 text-amber-700' },
-    ready: { label: '待审计', className: 'bg-emerald-100 text-emerald-700' },
-    auditing: { label: '审计中', className: 'bg-purple-100 text-purple-700 animate-pulse' },
+    uploading: { label: '待上传', className: 'bg-gray-100 text-gray-700' },
+    extracting: { label: '提取中', className: 'bg-blue-100 text-blue-700' },
+    auditing: { label: '审计中', className: 'bg-purple-100 text-purple-700' },
     completed: { label: '已完成', className: 'bg-green-100 text-green-700' },
-    error: { label: '处理失败', className: 'bg-red-100 text-red-700' },
+    // 兼容旧状态
+    draft: { label: '待上传', className: 'bg-gray-100 text-gray-700' },
+    parsing: { label: '提取中', className: 'bg-blue-100 text-blue-700' },
+    confirming: { label: '提取中', className: 'bg-blue-100 text-blue-700' },
+    ready: { label: '提取中', className: 'bg-blue-100 text-blue-700' },
   }
   const { label, className } = config[status] || { label: status, className: 'bg-gray-100 text-gray-700' }
   return <Badge className={className}>{label}</Badge>

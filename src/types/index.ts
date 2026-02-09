@@ -12,7 +12,12 @@ export interface Project {
   updatedAt: string
 }
 
-export type ProjectStatus = 'draft' | 'parsing' | 'confirming' | 'auditing' | 'completed'
+// 项目状态：
+// - uploading: 待上传（只有招标文件，未上传其他文件）
+// - extracting: 提取中（有文件，未执行过审计）
+// - auditing: 审计中（执行过审计，未点击完成）
+// - completed: 完成（点击完成按钮后）
+export type ProjectStatus = 'uploading' | 'extracting' | 'auditing' | 'completed'
 
 // =============== 项目文件相关类型 ===============
 export interface ProjectFile {

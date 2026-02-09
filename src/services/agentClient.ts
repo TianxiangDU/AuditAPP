@@ -7,7 +7,7 @@ function createAgentClient(): AxiosInstance {
   
   const instance = axios.create({
     baseURL: config.host,
-    timeout: 600000, // 10 分钟超时
+    timeout: 720000, // 12 分钟超时
     headers: {
       'Content-Type': 'application/json',
     },

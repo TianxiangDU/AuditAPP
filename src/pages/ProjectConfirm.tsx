@@ -357,8 +357,8 @@ export function ProjectConfirm() {
         await projectService.update(id, { name: nameField.value })
       }
 
-      // 更新项目状态为 ready
-      await projectService.update(id, { status: 'ready' })
+      // 更新项目状态为 extracting（提取中，等待上传更多文件）
+      await projectService.update(id, { status: 'extracting' })
 
       // 跳转到项目工作区
       navigate(`/projects/${id}`)

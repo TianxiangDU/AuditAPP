@@ -7,6 +7,9 @@ export type TaskType = 'upload' | 'parse' | 'classify' | 'extract' | 'audit'
 // 任务状态
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
 
+// 任务超时时间（12分钟）
+export const TASK_TIMEOUT_MS = 12 * 60 * 1000
+
 // 单个任务
 export interface Task {
   id: string
@@ -20,6 +23,8 @@ export interface Task {
   createdAt: Date
   completedAt?: Date
   error?: string
+  retryCount?: number // 重试次数
+  fileId?: string // 用于重试
 }
 
 // 任务统计
@@ -38,6 +43,8 @@ interface TaskContextType {
   removeProjectTasks: (projectId: string) => void  // 删除项目的所有任务
   clearCompleted: () => void
   getProjectTasks: (projectId: string) => Task[]
+  retryTask: (id: string) => void  // 重试任务
+  getTimedOutTasks: () => Task[]  // 获取超时的任务
 }
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined)
@@ -154,9 +161,64 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
     [tasks]
   )
 
+  // 获取超时的任务
+  const getTimedOutTasks = useCallback(() => {
+    const now = Date.now()
+    return tasks.filter(t => 
+      (t.status === 'running' || t.status === 'pending') &&
+      now - t.createdAt.getTime() > TASK_TIMEOUT_MS
+    )
+  }, [tasks])
+
+  // 重试任务（标记为待重试，需要外部处理实际重试逻辑）
+  const retryTask = useCallback((id: string) => {
+    setTasks(prev =>
+      prev.map(t => {
+        if (t.id === id) {
+          return {
+            ...t,
+            status: 'pending' as TaskStatus,
+            progress: 0,
+            message: '等待重试...',
+            error: undefined,
+            retryCount: (t.retryCount || 0) + 1,
+            createdAt: new Date(),
+          }
+        }
+        return t
+      })
+    )
+  }, [])
+
+  // 定时检测超时任务
+  useEffect(() => {
+    const checkTimeout = () => {
+      const now = Date.now()
+      setTasks(prev =>
+        prev.map(t => {
+          if (
+            (t.status === 'running' || t.status === 'pending') &&
+            now - t.createdAt.getTime() > TASK_TIMEOUT_MS
+          ) {
+            return {
+              ...t,
+              status: 'failed' as TaskStatus,
+              error: '任务超时（超过12分钟）',
+              completedAt: new Date(),
+            }
+          }
+          return t
+        })
+      )
+    }
+
+    const interval = setInterval(checkTimeout, 30000) // 每30秒检查一次
+    return () => clearInterval(interval)
+  }, [])
+
   return (
     <TaskContext.Provider
-      value={{ tasks, stats, addTask, updateTask, removeTask, removeProjectTasks, clearCompleted, getProjectTasks }}
+      value={{ tasks, stats, addTask, updateTask, removeTask, removeProjectTasks, clearCompleted, getProjectTasks, retryTask, getTimedOutTasks }}
     >
       {children}
     </TaskContext.Provider>

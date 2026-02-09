@@ -1,40 +1,30 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
   FileText,
   AlertTriangle,
-  Check,
-  ChevronDown,
   ChevronRight,
   FolderOpen,
   Loader2,
   Play,
   Download,
-  MoreHorizontal,
   Clock,
   CheckCircle2,
   XCircle,
-  Eye,
-  Plus,
+  Upload,
+  ClipboardList,
+  Flag,
+  RotateCcw,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { projectService, projectFileService, auditService } from '@/services'
-import { useTaskContext } from '@/contexts/TaskContext'
-import { cn, formatDate, formatRelativeTime } from '@/lib/utils'
+import { useTaskContext, TASK_TIMEOUT_MS } from '@/contexts/TaskContext'
+import { cn, formatDate } from '@/lib/utils'
+import { exportLedgerToExcel, exportRiskReportToExcel, formatDateForDisplay } from '@/utils/exportUtils'
 
 interface ProjectData {
   id: string
@@ -51,6 +41,7 @@ interface FileData {
   docTypeName: string | null
   status: string
   extractionStatus: string
+  isTender: boolean
 }
 
 interface RiskData {
@@ -64,21 +55,19 @@ interface RiskData {
 export function ProjectWorkspace() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { getProjectTasks } = useTaskContext()
+  const { getProjectTasks, updateTask, retryTask, removeTask } = useTaskContext()
 
   const [project, setProject] = useState<ProjectData | null>(null)
   const [files, setFiles] = useState<FileData[]>([])
   const [risks, setRisks] = useState<RiskData[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
-  // 折叠状态
-  const [showFiles, setShowFiles] = useState(true)
-  const [showRisks, setShowRisks] = useState(true)
+  const [isCompleting, setIsCompleting] = useState(false)
 
   // 项目相关的任务
   const projectTasks = id ? getProjectTasks(id) : []
   const runningTasks = projectTasks.filter(t => t.status === 'running' || t.status === 'pending')
+  const failedTasks = projectTasks.filter(t => t.status === 'failed')
 
   // 加载数据
   const loadData = async () => {
@@ -95,7 +84,7 @@ export function ProjectWorkspace() {
       setProject({
         id: projectData.id,
         name: (projectData as any).name || projectData.projectName || '未命名项目',
-        status: projectData.status || 'draft',
+        status: projectData.status || 'uploading',
         createdAt: projectData.createdAt,
         fileCount: (fileList || []).length,
         riskCount: 0,
@@ -108,6 +97,7 @@ export function ProjectWorkspace() {
           docTypeName: f.docTypeName,
           status: f.status,
           extractionStatus: f.extractionStatus || 'pending',
+          isTender: f.isTender || false,
         }))
       )
 
@@ -131,25 +121,77 @@ export function ProjectWorkspace() {
     loadData()
   }, [id])
 
-  // 如果项目状态为 confirming，自动跳转到确认页面
-  useEffect(() => {
-    if (project && project.status === 'confirming') {
-      navigate(`/projects/${id}/confirm`)
-    }
-  }, [project?.status, id, navigate])
+  // 计算项目当前阶段
+  const projectStage = useMemo(() => {
+    if (!project) return 'uploading'
+    
+    // 已完成
+    if (project.status === 'completed') return 'completed'
+    
+    // 有风险记录 = 审计中
+    if (risks.length > 0) return 'auditing'
+    
+    // 只有招标文件 = 待上传
+    const nonTenderFiles = files.filter(f => !f.isTender)
+    if (nonTenderFiles.length === 0) return 'uploading'
+    
+    // 有其他文件 = 提取中
+    return 'extracting'
+  }, [project, files, risks])
 
-  // 计算进度
-  const getProgress = () => {
-    if (!project) return 0
-    const stages = ['draft', 'parsing', 'confirming', 'auditing', 'completed']
-    const index = stages.indexOf(project.status)
-    return index >= 0 ? Math.round(((index + 1) / stages.length) * 100) : 0
+  // 进度百分比
+  const progressPercent = useMemo(() => {
+    switch (projectStage) {
+      case 'uploading': return 25
+      case 'extracting': return 50
+      case 'auditing': return 75
+      case 'completed': return 100
+      default: return 0
+    }
+  }, [projectStage])
+
+  // 统计
+  const stats = useMemo(() => {
+    const nonTenderFiles = files.filter(f => !f.isTender)
+    const extractedCount = nonTenderFiles.filter(f => f.extractionStatus === 'completed').length
+    const extractingCount = nonTenderFiles.filter(f => f.extractionStatus === 'processing').length
+    const pendingCount = nonTenderFiles.filter(f => f.extractionStatus === 'pending').length
+    
+    return {
+      totalFiles: nonTenderFiles.length,
+      extractedCount,
+      extractingCount,
+      pendingCount,
+      riskCount: risks.length,
+      highRiskCount: risks.filter(r => r.riskLevel === 'high' || r.riskLevel === 'critical').length,
+    }
+  }, [files, risks])
+
+  // 完成项目
+  const handleComplete = async () => {
+    if (!id || !project) return
+    
+    setIsCompleting(true)
+    try {
+      await projectService.update(id, { status: 'completed' })
+      setProject(prev => prev ? { ...prev, status: 'completed' } : null)
+    } catch (err) {
+      console.error('完成项目失败:', err)
+      alert('操作失败，请重试')
+    } finally {
+      setIsCompleting(false)
+    }
   }
 
-  // 快捷操作
-  const handleStartAudit = async () => {
-    // TODO: 调用审计服务
-    navigate(`/projects/${id}/audit`)
+  // 重试失败任务
+  const handleRetryTask = (taskId: string) => {
+    retryTask(taskId)
+    // 实际重试逻辑需要根据任务类型处理
+  }
+
+  // 取消任务
+  const handleCancelTask = (taskId: string) => {
+    updateTask(taskId, { status: 'failed', error: '已取消' })
   }
 
   if (isLoading) {
@@ -172,89 +214,76 @@ export function ProjectWorkspace() {
     )
   }
 
-  // 文件状态统计
-  const classifiedFiles = files.filter(f => f.status === 'classified' || f.status === 'pending').length // 待确认
-  const extractingFiles = files.filter(f => f.extractionStatus === 'processing').length // 提取中
-  const extractedFiles = files.filter(f => f.extractionStatus === 'completed').length // 已提取
-
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-6 max-w-4xl mx-auto">
       {/* 顶部导航 */}
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6">
         <Button variant="ghost" size="sm" onClick={() => navigate('/projects')}>
           <ArrowLeft className="mr-1 h-4 w-4" />
           返回列表
         </Button>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="icon">
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => navigate(`/projects/${id}/ledger`)}>
-              <FileText className="mr-2 h-4 w-4" />
-              查看台账
-            </DropdownMenuItem>
-            <DropdownMenuItem>
-              <Download className="mr-2 h-4 w-4" />
-              导出报告
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
 
-      {/* 项目头部信息 */}
-      <div className="mb-8 rounded-xl border bg-card p-6">
+      {/* 项目标题和状态 */}
+      <div className="mb-8">
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-bold">{project.name}</h1>
-            <div className="mt-2 flex items-center gap-4 text-sm text-muted-foreground">
+            <div className="mt-2 flex items-center gap-3 text-sm text-muted-foreground">
               <span className="flex items-center gap-1">
                 <Clock className="h-4 w-4" />
                 {formatDate(project.createdAt)}
               </span>
-              <span>{files.length} 个文件</span>
-              <ProjectStatusBadge status={project.status} />
+              <ProjectStageBadge stage={projectStage} />
             </div>
           </div>
-
-          {/* 主要操作 */}
-          <div className="flex items-center gap-2">
-            {project.status !== 'completed' && (
-              <>
-                <Button variant="outline" onClick={() => navigate(`/projects/${id}/files`)}>
-                  <Plus className="mr-1 h-4 w-4" />
-                  添加文件
-                </Button>
-                <Button onClick={handleStartAudit}>
-                  <Play className="mr-1 h-4 w-4" />
-                  开始审计
-                </Button>
-              </>
-            )}
-            {project.status === 'completed' && (
-              <Button onClick={() => navigate(`/projects/${id}/risks`)}>
-                <Eye className="mr-1 h-4 w-4" />
-                查看结果
-              </Button>
-            )}
-          </div>
+          
+          {/* 主要操作按钮 */}
+          {projectStage === 'completed' ? (
+            <Badge className="bg-green-100 text-green-700 text-base px-4 py-2">
+              <CheckCircle2 className="mr-2 h-5 w-5" />
+              已完成
+            </Badge>
+          ) : projectStage === 'auditing' ? (
+            <Button onClick={handleComplete} disabled={isCompleting}>
+              {isCompleting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Flag className="mr-2 h-4 w-4" />
+              )}
+              完成项目
+            </Button>
+          ) : null}
         </div>
 
         {/* 进度条 */}
-        <div className="mt-6">
-          <div className="mb-2 flex justify-between text-sm">
-            <span className="text-muted-foreground">审计进度</span>
-            <span className="font-medium">{getProgress()}%</span>
+        <div className="mt-6 bg-muted/50 rounded-xl p-4">
+          <div className="flex justify-between text-sm mb-2">
+            <span className="text-muted-foreground">项目进度</span>
+            <span className="font-medium">{progressPercent}%</span>
           </div>
-          <Progress value={getProgress()} className="h-2" />
-          <div className="mt-2 flex justify-between text-xs text-muted-foreground">
-            <span>资料上传</span>
-            <span>信息提取</span>
-            <span>智能审计</span>
-            <span>完成</span>
+          <Progress value={progressPercent} className="h-2" />
+          <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
+            <StageIndicator 
+              label="资料上传" 
+              active={projectStage === 'uploading'} 
+              completed={['extracting', 'auditing', 'completed'].includes(projectStage)}
+            />
+            <StageIndicator 
+              label="信息提取" 
+              active={projectStage === 'extracting'} 
+              completed={['auditing', 'completed'].includes(projectStage)}
+            />
+            <StageIndicator 
+              label="智能审计" 
+              active={projectStage === 'auditing'} 
+              completed={projectStage === 'completed'}
+            />
+            <StageIndicator 
+              label="完成" 
+              active={projectStage === 'completed'} 
+              completed={projectStage === 'completed'}
+            />
           </div>
         </div>
       </div>
@@ -267,292 +296,277 @@ export function ProjectWorkspace() {
             <span className="font-medium text-blue-900">正在处理 ({runningTasks.length})</span>
           </div>
           <div className="space-y-2">
-            {runningTasks.map(task => (
+            {runningTasks.map(task => {
+              const elapsed = Date.now() - task.createdAt.getTime()
+              const remaining = Math.max(0, TASK_TIMEOUT_MS - elapsed)
+              const remainingMin = Math.ceil(remaining / 60000)
+              
+              return (
+                <div key={task.id} className="flex items-center gap-3 text-sm">
+                  <span className="text-blue-700 flex-1 truncate">{task.fileName || task.message}</span>
+                  <Progress value={task.progress} className="h-1.5 w-24" />
+                  <span className="text-xs text-blue-600 w-16 text-right">{task.progress}%</span>
+                  <span className="text-xs text-muted-foreground w-12">剩余{remainingMin}分</span>
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className="h-6 w-6 text-muted-foreground hover:text-red-500"
+                    onClick={() => handleCancelTask(task.id)}
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 失败的任务 */}
+      {failedTasks.length > 0 && (
+        <div className="mb-6 rounded-xl border border-red-200 bg-red-50/50 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <XCircle className="h-4 w-4 text-red-600" />
+            <span className="font-medium text-red-900">处理失败 ({failedTasks.length})</span>
+          </div>
+          <div className="space-y-2">
+            {failedTasks.map(task => (
               <div key={task.id} className="flex items-center gap-3 text-sm">
-                <span className="text-blue-700">{task.fileName || task.message}</span>
-                <Progress value={task.progress} className="h-1.5 flex-1 max-w-32" />
-                <span className="text-xs text-blue-600">{task.progress}%</span>
+                <span className="text-red-700 flex-1 truncate">{task.fileName || task.message}</span>
+                <span className="text-xs text-red-500 truncate max-w-48">{task.error}</span>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="h-7 text-xs"
+                  onClick={() => handleRetryTask(task.id)}
+                >
+                  <RotateCcw className="h-3 w-3 mr-1" />
+                  重试
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="h-6 w-6 text-muted-foreground"
+                  onClick={() => removeTask(task.id)}
+                >
+                  <X className="h-3 w-3" />
+                </Button>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* 审计结果/风险 - 优先显示 */}
-      {risks.length > 0 && (
-        <Collapsible open={showRisks} onOpenChange={setShowRisks} className="mb-6">
-          <div className="rounded-xl border">
-            <CollapsibleTrigger asChild>
-              <button className="flex w-full items-center justify-between p-4 hover:bg-muted/50">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-100">
-                    <AlertTriangle className="h-5 w-5 text-red-600" />
-                  </div>
-                  <div className="text-left">
-                    <h2 className="font-semibold">风险发现</h2>
-                    <p className="text-sm text-muted-foreground">
-                      发现 {risks.length} 个潜在风险点
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="destructive">{risks.length}</Badge>
-                  {showRisks ? (
-                    <ChevronDown className="h-5 w-5 text-muted-foreground" />
-                  ) : (
-                    <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                  )}
-                </div>
-              </button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="border-t p-4 space-y-3">
-                {risks.slice(0, 5).map(risk => (
-                  <div
-                    key={risk.id}
-                    className="flex items-start gap-3 rounded-lg border p-3"
-                  >
-                    <RiskLevelIcon level={risk.riskLevel} />
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium">{risk.ruleName}</p>
-                      <p className="text-sm text-muted-foreground line-clamp-2">
-                        {risk.description}
-                      </p>
-                    </div>
-                    <Badge variant={risk.status === 'resolved' ? 'outline' : 'secondary'}>
-                      {risk.status === 'resolved' ? '已处理' : '待处理'}
-                    </Badge>
-                  </div>
-                ))}
-                {risks.length > 5 && (
-                  <Button
-                    variant="ghost"
-                    className="w-full"
-                    onClick={() => navigate(`/projects/${id}/risks`)}
-                  >
-                    查看全部 {risks.length} 个风险
-                    <ChevronRight className="ml-1 h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-            </CollapsibleContent>
-          </div>
-        </Collapsible>
-      )}
+      {/* 功能卡片 */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        {/* 项目资料 */}
+        <ActionCard
+          icon={FolderOpen}
+          title="项目资料"
+          description={
+            stats.totalFiles === 0
+              ? '上传项目相关文件'
+              : `${stats.totalFiles} 个文件，${stats.extractedCount} 个已提取`
+          }
+          badge={stats.extractingCount > 0 ? `${stats.extractingCount} 个处理中` : undefined}
+          badgeVariant="processing"
+          onClick={() => navigate(`/projects/${id}/files`)}
+          highlight={projectStage === 'uploading'}
+          actionLabel={projectStage === 'uploading' ? '上传文件' : '管理文件'}
+          actionIcon={projectStage === 'uploading' ? Upload : ChevronRight}
+        />
 
-      {/* 文件列表 */}
-      <Collapsible open={showFiles} onOpenChange={setShowFiles}>
-        <div className="rounded-xl border">
-          <CollapsibleTrigger asChild>
-            <button className="flex w-full items-center justify-between p-4 hover:bg-muted/50">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                  <FolderOpen className="h-5 w-5 text-primary" />
-                </div>
-                <div className="text-left">
-                  <h2 className="font-semibold">项目资料</h2>
-                  <p className="text-sm text-muted-foreground">
-                    {files.length} 个文件
-                    {classifiedFiles > 0 && `，${classifiedFiles} 个待确认`}
-                    {extractingFiles > 0 && `，${extractingFiles} 个提取中`}
-                    {extractedFiles > 0 && `，${extractedFiles} 个已提取`}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    navigate(`/projects/${id}/files`)
-                  }}
-                >
-                  管理文件
-                </Button>
-                {showFiles ? (
-                  <ChevronDown className="h-5 w-5 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                )}
-              </div>
-            </button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="border-t">
-              {files.length === 0 ? (
-                <div className="p-8 text-center">
-                  <FileText className="mx-auto h-12 w-12 text-muted-foreground/50" />
-                  <p className="mt-2 text-muted-foreground">暂无文件</p>
-                  <Button
-                    className="mt-4"
-                    onClick={() => navigate(`/projects/${id}/files`)}
-                  >
-                    上传文件
-                  </Button>
-                </div>
-              ) : (
-                <div className="divide-y">
-                  {files.map(file => (
-                    <Link
-                      key={file.id}
-                      to={`/projects/${id}/files/${file.id}`}
-                      className="flex items-center gap-4 p-4 hover:bg-muted/50"
-                    >
-                      <FileText className="h-5 w-5 text-muted-foreground" />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium truncate">{file.fileName}</p>
-                        {file.docTypeName && (
-                          <p className="text-sm text-primary">{file.docTypeName}</p>
-                        )}
-                      </div>
-                      <FileStatusBadge status={file.status} extractionStatus={file.extractionStatus} />
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </div>
-          </CollapsibleContent>
-        </div>
-      </Collapsible>
-
-      {/* 快捷入口 */}
-      <div className="mt-6 grid gap-4 sm:grid-cols-3">
-        <QuickLink
-          icon={FileText}
-          label="项目台账"
-          description="汇总提取的关键信息"
+        {/* 项目台账 */}
+        <ActionCard
+          icon={ClipboardList}
+          title="项目台账"
+          description="查看汇总的关键信息"
           onClick={() => navigate(`/projects/${id}/ledger`)}
+          actionLabel="查看"
+          actionIcon={ChevronRight}
         />
-        <QuickLink
+
+        {/* 智能审计 */}
+        <ActionCard
           icon={Play}
-          label="执行审计"
-          description="运行智能审计规则"
+          title="智能审计"
+          description={
+            risks.length > 0
+              ? `已发现 ${risks.length} 个风险点`
+              : '执行智能审计规则'
+          }
+          badge={risks.length > 0 ? `${stats.highRiskCount} 个高风险` : undefined}
+          badgeVariant="danger"
           onClick={() => navigate(`/projects/${id}/audit`)}
+          highlight={projectStage === 'extracting'}
+          actionLabel={risks.length > 0 ? '继续审计' : '开始审计'}
+          actionIcon={Play}
         />
-        <QuickLink
+
+        {/* 风险报告 */}
+        <ActionCard
           icon={AlertTriangle}
-          label="风险报告"
-          description={risks.length > 0 ? `${risks.length} 个风险待处理` : '暂无风险'}
+          title="风险报告"
+          description={
+            risks.length > 0
+              ? `${risks.length} 个风险待处理`
+              : '暂无风险发现'
+          }
           onClick={() => navigate(`/projects/${id}/risks`)}
-          highlight={risks.length > 0}
+          disabled={risks.length === 0}
+          actionLabel="查看报告"
+          actionIcon={ChevronRight}
         />
       </div>
+
+      {/* 快速导出 */}
+      {projectStage !== 'uploading' && (
+        <div className="mt-6 flex gap-3">
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => {
+              // 导出台账
+              if (id && project) {
+                exportLedgerToExcel({
+                  projectName: project.name,
+                  exportDate: formatDateForDisplay(new Date()),
+                  tabs: [] // 简化处理，实际需要加载数据
+                })
+              }
+            }}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            导出台账
+          </Button>
+          {risks.length > 0 && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => {
+                if (id && project) {
+                  exportRiskReportToExcel({
+                    projectName: project.name,
+                    exportDate: formatDateForDisplay(new Date()),
+                    summary: {
+                      high: stats.highRiskCount,
+                      medium: risks.filter(r => r.riskLevel === 'medium').length,
+                      low: risks.filter(r => r.riskLevel === 'low').length,
+                      total: risks.length,
+                    },
+                    risks: risks.map(r => ({
+                      ruleName: r.ruleName,
+                      ruleCode: '',
+                      severity: r.riskLevel,
+                      description: r.description,
+                      suggestion: '',
+                    }))
+                  })
+                }
+              }}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              导出风险报告
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
-// 项目状态徽章
-function ProjectStatusBadge({ status }: { status: string }) {
+// 项目阶段徽章
+function ProjectStageBadge({ stage }: { stage: string }) {
   const config: Record<string, { label: string; className: string }> = {
-    draft: { label: '草稿', className: 'bg-gray-100 text-gray-700' },
-    uploading: { label: '上传中', className: 'bg-blue-100 text-blue-700' },
-    parsing: { label: '解析中', className: 'bg-blue-100 text-blue-700' },
-    extracting: { label: '提取中', className: 'bg-indigo-100 text-indigo-700' },
-    confirming: { label: '待确认', className: 'bg-amber-100 text-amber-700' },
-    ready: { label: '待审计', className: 'bg-emerald-100 text-emerald-700' },
+    uploading: { label: '待上传', className: 'bg-gray-100 text-gray-700' },
+    extracting: { label: '提取中', className: 'bg-blue-100 text-blue-700' },
     auditing: { label: '审计中', className: 'bg-purple-100 text-purple-700' },
     completed: { label: '已完成', className: 'bg-green-100 text-green-700' },
-    error: { label: '处理失败', className: 'bg-red-100 text-red-700' },
   }
-  const { label, className } = config[status] || { label: status, className: 'bg-gray-100 text-gray-700' }
+  const { label, className } = config[stage] || config.uploading
   return <Badge className={className}>{label}</Badge>
 }
 
-// 文件状态徽章 - 显示当前处理阶段
-function FileStatusBadge({ status, extractionStatus }: { status: string; extractionStatus: string }) {
-  // 优先显示提取状态
-  if (extractionStatus === 'completed') {
-    return (
-      <Badge className="bg-green-100 text-green-700 gap-1">
-        <CheckCircle2 className="h-3 w-3" />
-        已提取
-      </Badge>
-    )
-  }
-  if (extractionStatus === 'processing') {
-    return (
-      <Badge className="bg-blue-100 text-blue-700 gap-1">
-        <Loader2 className="h-3 w-3 animate-spin" />
-        提取中
-      </Badge>
-    )
-  }
-  // 确认后等待提取
-  if (status === 'confirmed') {
-    return (
-      <Badge className="bg-indigo-100 text-indigo-700 gap-1">
-        <Clock className="h-3 w-3" />
-        待提取
-      </Badge>
-    )
-  }
-  // 已分拣待确认
-  if (status === 'classified') {
-    return (
-      <Badge className="bg-amber-100 text-amber-700 gap-1">
-        <Clock className="h-3 w-3" />
-        待确认
-      </Badge>
-    )
-  }
+// 阶段指示器
+function StageIndicator({ label, active, completed }: { label: string; active: boolean; completed: boolean }) {
   return (
-    <Badge variant="outline" className="gap-1">
-      <Clock className="h-3 w-3" />
-      待分拣
-    </Badge>
-  )
-}
-
-// 风险等级图标
-function RiskLevelIcon({ level }: { level: string }) {
-  const config: Record<string, { bg: string; color: string }> = {
-    high: { bg: 'bg-red-100', color: 'text-red-600' },
-    medium: { bg: 'bg-amber-100', color: 'text-amber-600' },
-    low: { bg: 'bg-blue-100', color: 'text-blue-600' },
-  }
-  const { bg, color } = config[level] || config.medium
-  return (
-    <div className={cn('flex h-8 w-8 items-center justify-center rounded-lg', bg)}>
-      <AlertTriangle className={cn('h-4 w-4', color)} />
+    <div className={cn(
+      'text-center',
+      completed ? 'text-green-600' : active ? 'text-primary font-medium' : 'text-muted-foreground'
+    )}>
+      <div className={cn(
+        'h-2 w-2 rounded-full mx-auto mb-1',
+        completed ? 'bg-green-500' : active ? 'bg-primary' : 'bg-muted-foreground/30'
+      )} />
+      {label}
     </div>
   )
 }
 
-// 快捷入口
-function QuickLink({
+// 功能卡片
+function ActionCard({
   icon: Icon,
-  label,
+  title,
   description,
+  badge,
+  badgeVariant,
   onClick,
   highlight,
+  disabled,
+  actionLabel,
+  actionIcon: ActionIcon,
 }: {
   icon: React.ElementType
-  label: string
+  title: string
   description: string
+  badge?: string
+  badgeVariant?: 'processing' | 'danger'
   onClick: () => void
   highlight?: boolean
+  disabled?: boolean
+  actionLabel: string
+  actionIcon: React.ElementType
 }) {
   return (
     <button
       className={cn(
-        'flex items-center gap-3 rounded-xl border p-4 text-left transition-colors hover:bg-muted/50',
-        highlight && 'border-red-200 bg-red-50/50'
+        'flex items-center gap-4 rounded-xl border p-4 text-left transition-all hover:shadow-md',
+        highlight && 'border-primary bg-primary/5 ring-1 ring-primary/20',
+        disabled && 'opacity-50 cursor-not-allowed hover:shadow-none'
       )}
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
     >
-      <div
-        className={cn(
-          'flex h-10 w-10 items-center justify-center rounded-lg',
-          highlight ? 'bg-red-100 text-red-600' : 'bg-muted'
-        )}
-      >
-        <Icon className="h-5 w-5" />
+      <div className={cn(
+        'flex h-12 w-12 shrink-0 items-center justify-center rounded-xl',
+        highlight ? 'bg-primary text-white' : 'bg-muted'
+      )}>
+        <Icon className="h-6 w-6" />
       </div>
-      <div>
-        <p className="font-medium">{label}</p>
-        <p className="text-sm text-muted-foreground">{description}</p>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <p className="font-semibold">{title}</p>
+          {badge && (
+            <Badge 
+              variant="outline" 
+              className={cn(
+                'text-xs',
+                badgeVariant === 'danger' && 'border-red-200 text-red-600 bg-red-50',
+                badgeVariant === 'processing' && 'border-blue-200 text-blue-600 bg-blue-50'
+              )}
+            >
+              {badge}
+            </Badge>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground truncate">{description}</p>
+      </div>
+      <div className={cn(
+        'flex items-center gap-1 text-sm',
+        highlight ? 'text-primary' : 'text-muted-foreground'
+      )}>
+        <span>{actionLabel}</span>
+        <ActionIcon className="h-4 w-4" />
       </div>
     </button>
   )

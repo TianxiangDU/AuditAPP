@@ -11,7 +11,7 @@ const TABLES = `
 CREATE TABLE IF NOT EXISTS projects (
   id VARCHAR(64) PRIMARY KEY,
   name VARCHAR(255) NOT NULL COMMENT '项目名称',
-  status VARCHAR(32) DEFAULT 'draft' COMMENT '项目状态（draft, uploading, parsing, extracting, confirming, ready, auditing, completed, error）',
+  status VARCHAR(32) DEFAULT 'uploading' COMMENT '项目状态（uploading, extracting, auditing, completed）',
   tender_file_id VARCHAR(64) COMMENT '招标文件ID（智能体平台）',
   tender_ds_id INT COMMENT '招标文件知识库数据集ID',
   tender_file_url VARCHAR(512) COMMENT '招标文件预览URL',
