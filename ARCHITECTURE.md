@@ -371,10 +371,19 @@ src/pages/
 ### 7.1 项目状态
 
 ```
-draft ──► uploading ──► parsing ──► extracting ──► confirming ──► ready ──► auditing ──► completed
-                                                                    │
-                                                                    └──► error (任意阶段可能)
+uploading ──► extracting ──► auditing ──► completed
+    │              │             │
+    │              │             └── 执行过审计，点击完成按钮后变为 completed
+    │              └────────────── 有文件，未执行过审计
+    └───────────────────────────── 只有招标文件，未上传其他文件
 ```
+
+| 状态 | 含义 | 触发条件 |
+|------|------|----------|
+| uploading | 待上传 | 只有招标文件，未上传其他文件 |
+| extracting | 提取中 | 有其他文件，未执行过审计 |
+| auditing | 审计中 | 执行过审计，未点击完成 |
+| completed | 已完成 | 点击"完成项目"按钮 |
 
 ### 7.2 文件状态
 
