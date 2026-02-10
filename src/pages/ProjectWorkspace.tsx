@@ -22,7 +22,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { projectService, projectFileService, auditService } from '@/services'
-import { useTaskContext, TASK_TIMEOUT_MS } from '@/contexts/TaskContext'
+import { useTaskContext } from '@/contexts/TaskContext'
 import { cn, formatDate } from '@/lib/utils'
 import { exportLedgerToExcel, exportRiskReportToExcel, formatDateForDisplay } from '@/utils/exportUtils'
 
@@ -296,28 +296,21 @@ export function ProjectWorkspace() {
             <span className="font-medium text-blue-900">正在处理 ({runningTasks.length})</span>
           </div>
           <div className="space-y-2">
-            {runningTasks.map(task => {
-              const elapsed = Date.now() - task.createdAt.getTime()
-              const remaining = Math.max(0, TASK_TIMEOUT_MS - elapsed)
-              const remainingMin = Math.ceil(remaining / 60000)
-              
-              return (
-                <div key={task.id} className="flex items-center gap-3 text-sm">
-                  <span className="text-blue-700 flex-1 truncate">{task.fileName || task.message}</span>
-                  <Progress value={task.progress} className="h-1.5 w-24" />
-                  <span className="text-xs text-blue-600 w-16 text-right">{task.progress}%</span>
-                  <span className="text-xs text-muted-foreground w-12">剩余{remainingMin}分</span>
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className="h-6 w-6 text-muted-foreground hover:text-red-500"
-                    onClick={() => handleCancelTask(task.id)}
-                  >
-                    <X className="h-3 w-3" />
-                  </Button>
-                </div>
-              )
-            })}
+            {runningTasks.map(task => (
+              <div key={task.id} className="flex items-center gap-3 text-sm">
+                <span className="text-blue-700 flex-1 truncate">{task.fileName || task.message}</span>
+                <Progress value={task.progress} className="h-1.5 w-24" />
+                <span className="text-xs text-blue-600 w-12 text-right">{task.progress}%</span>
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="h-6 w-6 text-muted-foreground hover:text-red-500"
+                  onClick={() => handleCancelTask(task.id)}
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+            ))}
           </div>
         </div>
       )}

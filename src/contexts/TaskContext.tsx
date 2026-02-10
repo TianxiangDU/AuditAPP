@@ -7,8 +7,8 @@ export type TaskType = 'upload' | 'parse' | 'classify' | 'extract' | 'audit'
 // 任务状态
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
 
-// 任务超时时间（12分钟）
-export const TASK_TIMEOUT_MS = 12 * 60 * 1000
+// 任务超时时间（禁用）
+export const TASK_TIMEOUT_MS = 0 // 不限制超时
 
 // 单个任务
 export interface Task {
@@ -190,31 +190,13 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
     )
   }, [])
 
-  // 定时检测超时任务
-  useEffect(() => {
-    const checkTimeout = () => {
-      const now = Date.now()
-      setTasks(prev =>
-        prev.map(t => {
-          if (
-            (t.status === 'running' || t.status === 'pending') &&
-            now - t.createdAt.getTime() > TASK_TIMEOUT_MS
-          ) {
-            return {
-              ...t,
-              status: 'failed' as TaskStatus,
-              error: '任务超时（超过12分钟）',
-              completedAt: new Date(),
-            }
-          }
-          return t
-        })
-      )
-    }
-
-    const interval = setInterval(checkTimeout, 30000) // 每30秒检查一次
-    return () => clearInterval(interval)
-  }, [])
+  // 定时检测超时任务（已禁用）
+  // useEffect(() => {
+  //   if (TASK_TIMEOUT_MS <= 0) return // 超时已禁用
+  //   const checkTimeout = () => { ... }
+  //   const interval = setInterval(checkTimeout, 30000)
+  //   return () => clearInterval(interval)
+  // }, [])
 
   return (
     <TaskContext.Provider
